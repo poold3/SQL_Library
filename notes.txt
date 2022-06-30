@@ -1,0 +1,1 @@
+vector<struct> getEvents = SQL_Query("SELECT *, id");
