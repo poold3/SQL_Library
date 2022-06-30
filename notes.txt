@@ -1,1 +1,3 @@
-vector<struct> getEvents = SQL_Query("SELECT *, id");
+vector<struct> getEvents = SQL_Query("SELECT name FROM table.txt WHERE id = 1");
+SQL_Query("CREATE TABLE table.txt (id INT, name TEXT)");
+SQL_Query("INSERT INTO table.txt (id, name) VALUES ()");
