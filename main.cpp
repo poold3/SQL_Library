@@ -7,10 +7,6 @@
 using namespace std;
 
 int main () {
-    SQL_Query("CREATE TABLE table.txt (id INT, name TEXT)");
-
-
-
-
+    SQL_Query("CREATE TABLE table (id INT, name TEXT)");
     return 0;
 }
