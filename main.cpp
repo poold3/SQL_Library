@@ -7,6 +7,11 @@
 using namespace std;
 
 int main () {
-    SQL_Query("INSERT INTO table (id, name) VALUES (1, 'Dallin')");
+    //SQL_Query("CREATE TABLE table (id INT, name TEXT)");
+    vector<string> names{"Dallin", "Ryan", "Madaleine", "Seth", "Mike"};
+    for (int i = 0; i < (int)names.size(); ++i) {
+        SQL_Query(3, "INSERT INTO table (id, name) VALUES (*var* ,'*var*')",i,names.at(i));
+    }
+    
     return 0;
 }

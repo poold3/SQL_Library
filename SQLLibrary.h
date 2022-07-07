@@ -9,6 +9,7 @@
 #include<utility>
 #include<map>
 #include<ctype.h>
+#include<stdarg.h>
 
 using namespace std;
 
@@ -234,7 +235,7 @@ queue<Token> GetTokens(string input) {
         }
         else if (input.at(0) == '\'') {
             size = FindTextLength(input);
-            type = "Text";
+            type = "TEXT";
         }
         else if (isalpha(input.at(0))) {
             size = FindIdentifierLength(input);
@@ -242,7 +243,7 @@ queue<Token> GetTokens(string input) {
         }
         else if (isdigit(input.at(0))) {
             size = FindIntLength(input);
-            type = "Int";
+            type = "INT";
         }
         else if (input.at(0) == ' ') {
             size = 1;
@@ -268,15 +269,15 @@ string MatchToken(string type, queue<Token> &tokens) {
         Throw_Error("Missing Input!");
     }
     else if (tokens.front().GetType() != type) {
-        Throw_Error("Invalid Sql Input!");
+        stringstream ss;
+        ss << "Invalid Sql Input: " << type;
+        Throw_Error(ss.str());
     }
     return tokens.front().GetValue();
 }
 
-map<string, string> GetTableSchema(string tableName) {
-    
-    map<string, string> schema;
-    //mymap.insert ( std::pair<char,int>('z',500) );
+vector<string> GetTableFieldsOrder(string tableName) {
+    vector<string> fields;
     ifstream inFile;
     inFile.open(tableName);
     if (!inFile.is_open()) {
@@ -284,9 +285,35 @@ map<string, string> GetTableSchema(string tableName) {
         ss << "Unable to open table: " << tableName;
         Throw_Error(ss.str());
     }
-    string schemaLine;
-    getline(inFile, schemaLine);
-    queue<Token> tokens = GetTokens(schemaLine);
+    string fieldsLine;
+    getline(inFile, fieldsLine);
+    queue<Token> tokens = GetTokens(fieldsLine);
+    while (tokens.size() > 0 && tokens.front().GetType() != "Period") {
+        string temp;
+        temp = MatchToken("Identifier", tokens);
+        tokens.pop();
+        MatchToken("Datatype", tokens);
+        tokens.pop();
+        MatchToken("Comma", tokens);
+        tokens.pop();
+        fields.push_back(temp);
+    }
+    inFile.close();
+    return fields;
+}
+
+map<string,string> GetTableFieldsMap(string tableName) {
+    map<string, string> fields;
+    ifstream inFile;
+    inFile.open(tableName);
+    if (!inFile.is_open()) {
+        stringstream ss;
+        ss << "Unable to open table: " << tableName;
+        Throw_Error(ss.str());
+    }
+    string fieldsLine;
+    getline(inFile, fieldsLine);
+    queue<Token> tokens = GetTokens(fieldsLine);
     while (tokens.size() > 0 && tokens.front().GetType() != "Period") {
         pair<string, string> temp;
         temp.first = MatchToken("Identifier", tokens);
@@ -295,12 +322,47 @@ map<string, string> GetTableSchema(string tableName) {
         tokens.pop();
         MatchToken("Comma", tokens);
         tokens.pop();
-        schema.insert(temp);
+        fields.insert(temp);
     }
-    return schema;
+    inFile.close();
+    return fields;
 }
 
-void SQL_Query(string query) {
+void VerifyColumnName(string columnName, map<string,string> &fields) {
+    if (fields.find(columnName) == fields.end()) {
+        stringstream ss;
+        ss << "Column '" << columnName << "' does not exist";
+        Throw_Error(ss.str());
+    }
+}
+
+void AppendToTable(string tableName, string newLine) {
+    ofstream outFile;
+    outFile.open(tableName, ios_base::app);
+    if (!outFile.is_open()) {
+        stringstream ss;
+        ss << "Unable to write to " << tableName;
+        Throw_Error(ss.str());
+    }
+    outFile.write(newLine.data(), newLine.size());
+    outFile.close();
+}
+
+void SQL_Query(int numArgs,...) {
+    string query;
+    va_list valist;
+    vector<string> arguments;
+    va_start(valist, numArgs);
+    for (int i = 0; i < numArgs; ++i) {
+        stringstream ss;
+        ss << va_arg(valist, auto);
+        arguments.push_back(ss.str());
+    }
+    va_end(valist);
+    for (string arg: arguments) {
+        cout << arg << endl;
+    }
+    return;
     queue<Token> tokens = GetTokens(query);
     
     //Determine which operation is being performed
@@ -346,14 +408,95 @@ void SQL_Query(string query) {
         
         tokens.pop();
 
-        //Read schema from table
+        //Read fields from table
         string tableName = MatchToken("Identifier", tokens);
         tableName += ".txt";
-        map<string, string> schema = GetTableSchema(tableName);
+        map<string, string> fields = GetTableFieldsMap(tableName);
+        vector<string> fieldOrder = GetTableFieldsOrder(tableName);
         tokens.pop();
-        for (auto const& column : schema) {
-            cout << column.first << " " << column.second << endl;
+
+        MatchToken("Left-Paren", tokens);
+        tokens.pop();
+
+        //Verify that column names in query match those in table fields
+        vector<string> columnsToInsert;
+        while (tokens.size() > 0 && tokens.front().GetType() != "Right-Paren") {
+            if (columnsToInsert.size() > 0) {
+                MatchToken("Comma", tokens);
+                tokens.pop();
+            }
+            string columnName = MatchToken("Identifier", tokens);
+            tokens.pop();
+            VerifyColumnName(columnName, fields);
+            columnsToInsert.push_back(columnName);
         }
+
+        MatchToken("Right-Paren", tokens);
+        tokens.pop();
+
+        MatchToken("Values", tokens);
+        tokens.pop();
+
+        MatchToken("Left-Paren", tokens);
+        tokens.pop();
+
+        map<string,string> columnAndValues;
+        while (tokens.size() > 0 && tokens.front().GetType() != "Right-Paren") {
+            if (columnAndValues.size() > 0) {
+                MatchToken("Comma", tokens);
+                tokens.pop();
+            }
+            string value;
+            string type;
+            if (tokens.front().GetType() == "INT") {
+                value = DecimalToHex(MatchToken("INT", tokens));
+                type = "INT";
+            }
+            else if (tokens.front().GetType() == "TEXT") {
+                value = MatchToken("TEXT", tokens);
+                type = "TEXT";
+            }
+            else {
+                stringstream ss;
+                ss << "Invalid datatype: " << tokens.front().GetValue() << " is not a valid datatype";
+                Throw_Error(ss.str());
+            }
+            tokens.pop();
+            if (fields.at(columnsToInsert.at(columnAndValues.size())) == type) {
+                columnAndValues.insert(pair<string,string>(columnsToInsert.at(columnAndValues.size()), value));
+            }
+            else {
+                stringstream ss;
+                ss << "Invalid datatype: Column '" << columnsToInsert.at(columnAndValues.size()) << "' cannot accept the value " << value;
+                Throw_Error(ss.str());
+            }
+        }
+
+        if (columnsToInsert.size() != columnAndValues.size()) {
+            Throw_Error("Incorrect number of columns");
+        }
+
+        MatchToken("Right-Paren", tokens);
+        tokens.pop();
+
+        //Take our map of columns and new values and create append string
+        stringstream ss;
+        map<string,string>::iterator it;
+
+        for (string field : fieldOrder) {
+            it = columnAndValues.find(field);
+            if (it != columnAndValues.end()) {
+                ss << it->second << ",";
+            }
+            else {
+                ss << "NULL,";
+            }
+        }
+        ss << "." << endl;
+
+        //Append to table
+        AppendToTable(tableName, ss.str());
+
     }
     else if (tokens.front().GetType() == "Select") {
 
