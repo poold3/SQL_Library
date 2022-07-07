@@ -4,6 +4,8 @@
 #include<string>
 #include<iostream>
 #include<sstream>
+#include<fstream>
+#include<queue>
 #include<ctype.h>
 
 using namespace std;
@@ -99,8 +101,8 @@ int FindIntLength(string input) {
     return index;
 }
 
-vector<Token> GetTokens(string input) {
-    vector<Token> tokens;
+queue<Token> GetTokens(string input) {
+    queue<Token> tokens;
     int size;
     string type;
     while(input.length() > 0) {
@@ -214,15 +216,15 @@ vector<Token> GetTokens(string input) {
         }
         else if (input.substr(0, 4) == "TEXT") {
             size = 4;
-            type = "TEXT";
+            type = "Datatype";
         }
         else if (input.substr(0, 3) == "INT") {
             size = 3;
-            type = "INT";
+            type = "Datatype";
         }
         else if (input.substr(0, 4) == "DATE") {
             size = 4;
-            type = "DATE";
+            type = "Datatype";
         }
         else if (input.at(0) == '\'') {
             size = FindTextLength(input);
@@ -247,7 +249,7 @@ vector<Token> GetTokens(string input) {
         }
         if (type != "Space") {
             Token temp(type, input.substr(0, size));
-            tokens.push_back(temp);
+            tokens.push(temp);
         }
         input = input.substr(size);
     }
@@ -255,24 +257,60 @@ vector<Token> GetTokens(string input) {
     return tokens;
 }
 
+string MatchToken(string type, queue<Token> &tokens) {
+    if (tokens.front().GetType() != type) {
+        Throw_Error("Invalid Sql Input!");
+    }
+    return tokens.front().GetValue();
+}
+
 void SQL_Query(string query) {
-    vector<Token> tokens = GetTokens(query);
-    //Determine what operation is being performed
-    if (tokens.at(0).GetType() == "Create") {
-        for (Token token : tokens) {
-            cout << token.GetType() << ": " << token.GetValue() << endl;
+    queue<Token> tokens = GetTokens(query);
+
+    //Determine which operation is being performed
+    if (tokens.front().GetType() == "Create") {
+        tokens.pop();
+
+        //Create new table
+        string tableName = MatchToken("Identifier", tokens);
+        tableName += ".txt";
+        ofstream outFile;
+        outFile.open(tableName);
+        if (!outFile.is_open()) {
+            Throw_Error("Unable to create new table!");
         }
+        tokens.pop();
+
+        MatchToken("Left-Paren", tokens);
+        tokens.pop();
+        int numColumns = 0;
+        while (tokens.size() > 0 && tokens.front().GetType() != "Right-Paren") {
+            if (numColumns > 0) {
+                MatchToken("Comma", tokens);
+                tokens.pop();
+            }
+            string columnName = MatchToken("Identifier", tokens);
+            tokens.pop();
+            string dataType = MatchToken("Datatype", tokens);
+            tokens.pop();
+            outFile << columnName << " " << dataType << ",";
+            ++numColumns;
+        }
+        MatchToken("Right-Paren", tokens);
+        tokens.pop();
+        outFile << "." << endl;
+        outFile.close();
     }
-    else if (tokens.at(0).GetType() == "Update") {
+    else if (tokens.front().GetType() == "Update") {
 
     }
-    else if (tokens.at(0).GetType() == "Insert") {
+    else if (tokens.front().GetType() == "Insert") {
 
     }
-    else if (tokens.at(0).GetType() == "Select") {
+    else if (tokens.front().GetType() == "Select") {
 
     }
-    else if (tokens.at(0).GetType() == "Delete") {
+    else if (tokens.front().GetType() == "Delete") {
 
     }
     else {
