@@ -7,6 +7,6 @@
 using namespace std;
 
 int main () {
-    SQL_Query("CREATE TABLE table (id INT, name TEXT)");
+    SQL_Query("INSERT INTO table (id, name) VALUES (1, 'Dallin')");
     return 0;
 }

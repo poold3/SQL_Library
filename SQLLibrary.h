@@ -6,6 +6,8 @@
 #include<sstream>
 #include<fstream>
 #include<queue>
+#include<utility>
+#include<map>
 #include<ctype.h>
 
 using namespace std;
@@ -109,6 +111,10 @@ queue<Token> GetTokens(string input) {
         if (input.at(0) == ',') {
             size = 1;
             type = "Comma";
+        }
+        else if (input.at(0) == '.') {
+            size = 1;
+            type = "Period";
         }
         else if (input.at(0) == '(') {
             size = 1;
@@ -258,26 +264,58 @@ queue<Token> GetTokens(string input) {
 }
 
 string MatchToken(string type, queue<Token> &tokens) {
-    if (tokens.front().GetType() != type) {
+    if (tokens.size() == 0) {
+        Throw_Error("Missing Input!");
+    }
+    else if (tokens.front().GetType() != type) {
         Throw_Error("Invalid Sql Input!");
     }
     return tokens.front().GetValue();
 }
 
+map<string, string> GetTableSchema(string tableName) {
+    
+    map<string, string> schema;
+    //mymap.insert ( std::pair<char,int>('z',500) );
+    ifstream inFile;
+    inFile.open(tableName);
+    if (!inFile.is_open()) {
+        stringstream ss;
+        ss << "Unable to open table: " << tableName;
+        Throw_Error(ss.str());
+    }
+    string schemaLine;
+    getline(inFile, schemaLine);
+    queue<Token> tokens = GetTokens(schemaLine);
+    while (tokens.size() > 0 && tokens.front().GetType() != "Period") {
+        pair<string, string> temp;
+        temp.first = MatchToken("Identifier", tokens);
+        tokens.pop();
+        temp.second = MatchToken("Datatype", tokens);
+        tokens.pop();
+        MatchToken("Comma", tokens);
+        tokens.pop();
+        schema.insert(temp);
+    }
+    return schema;
+}
+
 void SQL_Query(string query) {
     queue<Token> tokens = GetTokens(query);
-
+    
     //Determine which operation is being performed
     if (tokens.front().GetType() == "Create") {
         tokens.pop();
-
+        
         //Create new table
         string tableName = MatchToken("Identifier", tokens);
         tableName += ".txt";
         ofstream outFile;
         outFile.open(tableName);
         if (!outFile.is_open()) {
-            Throw_Error("Unable to create new table!");
+            stringstream ss;
+            ss << "Unable to create new table: " << tableName;
+            Throw_Error(ss.str());
         }
         tokens.pop();
 
@@ -305,7 +343,17 @@ void SQL_Query(string query) {
 
     }
     else if (tokens.front().GetType() == "Insert") {
+        
+        tokens.pop();
 
+        //Read schema from table
+        string tableName = MatchToken("Identifier", tokens);
+        tableName += ".txt";
+        map<string, string> schema = GetTableSchema(tableName);
+        tokens.pop();
+        for (auto const& column : schema) {
+            cout << column.first << " " << column.second << endl;
+        }
     }
     else if (tokens.front().GetType() == "Select") {
 
