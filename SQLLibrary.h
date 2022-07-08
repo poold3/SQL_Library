@@ -9,8 +9,6 @@
 #include<utility>
 #include<map>
 #include<ctype.h>
-#include<stdarg.h>
-#include<typeinfo>
 
 using namespace std;
 
@@ -76,6 +74,7 @@ int HexToDecimal(string hexNumber) {
     return (decimalNumber);
 }
 
+//Find the number of chars in the string until the end single-quote character
 int FindTextLength(string input) {
     int index = 1;
     //Find the size of the text between single quotes.
@@ -89,6 +88,7 @@ int FindTextLength(string input) {
     return index;
 }
 
+//Find the number of chars until the first non-alphnumeric character
 int FindIdentifierLength(string input) {
     int index = 1;
     while (index < (int)input.length() && isalnum(input.at(index))) {
@@ -97,6 +97,7 @@ int FindIdentifierLength(string input) {
     return index;
 }
 
+//Find the number of chars until the first non-numeric character
 int FindIntLength(string input) {
     int index = 1;
     while (index < (int)input.length() && isdigit(input.at(index))) {
@@ -105,6 +106,7 @@ int FindIntLength(string input) {
     return index;
 }
 
+//A basic scanner to assign tokens to the SQL_Query Input
 queue<Token> GetTokens(string input) {
     queue<Token> tokens;
     int size;
@@ -117,6 +119,10 @@ queue<Token> GetTokens(string input) {
         else if (input.at(0) == '.') {
             size = 1;
             type = "Period";
+        }
+        else if (input.at(0) == '*') {
+            size = 1;
+            type = "Star";
         }
         else if (input.at(0) == '(') {
             size = 1;
@@ -265,6 +271,14 @@ queue<Token> GetTokens(string input) {
     return tokens;
 }
 
+//Return the table name provided in the SQL_Query Input
+string GetTableName(queue<Token> &tokens) {
+    string tableName = MatchToken("Identifier", tokens);
+    tableName += ".txt";
+    return tableName;
+}
+
+//Verifies that the front token in the queue is of the correct type.
 string MatchToken(string type, queue<Token> &tokens) {
     if (tokens.size() == 0) {
         Throw_Error("Missing Input!");
@@ -277,6 +291,7 @@ string MatchToken(string type, queue<Token> &tokens) {
     return tokens.front().GetValue();
 }
 
+//Returns the column name order of a table in a vector
 vector<string> GetTableFieldsOrder(string tableName) {
     vector<string> fields;
     ifstream inFile;
@@ -303,6 +318,7 @@ vector<string> GetTableFieldsOrder(string tableName) {
     return fields;
 }
 
+//Returns each column name along with its datatype in a map
 map<string,string> GetTableFieldsMap(string tableName) {
     map<string, string> fields;
     ifstream inFile;
@@ -329,6 +345,7 @@ map<string,string> GetTableFieldsMap(string tableName) {
     return fields;
 }
 
+//Makes sure that a columnName is present in the table columns
 void VerifyColumnName(string columnName, map<string,string> &fields) {
     if (fields.find(columnName) == fields.end()) {
         stringstream ss;
@@ -337,6 +354,7 @@ void VerifyColumnName(string columnName, map<string,string> &fields) {
     }
 }
 
+//Appends a new row onto a table
 void AppendToTable(string tableName, string newLine) {
     ofstream outFile;
     outFile.open(tableName, ios_base::app);
@@ -351,6 +369,7 @@ void AppendToTable(string tableName, string newLine) {
 
 void SQL_Query(string query) {
 
+    //Get tokens from input
     queue<Token> tokens = GetTokens(query);
     
     //Determine which operation is being performed
@@ -358,8 +377,7 @@ void SQL_Query(string query) {
         tokens.pop();
         
         //Create new table
-        string tableName = MatchToken("Identifier", tokens);
-        tableName += ".txt";
+        string tableName = GetTableName(tokens);
         ofstream outFile;
         outFile.open(tableName);
         if (!outFile.is_open()) {
@@ -369,6 +387,7 @@ void SQL_Query(string query) {
         }
         tokens.pop();
 
+        //Read in column names and datatypes
         MatchToken("Left-Paren", tokens);
         tokens.pop();
         int numColumns = 0;
@@ -393,34 +412,40 @@ void SQL_Query(string query) {
 
     }
     else if (tokens.front().GetType() == "Insert") {
-        
         tokens.pop();
 
         //Read fields from table
-        string tableName = MatchToken("Identifier", tokens);
-        tableName += ".txt";
+        string tableName = GetTableName(tokens);
         map<string, string> fields = GetTableFieldsMap(tableName);
         vector<string> fieldOrder = GetTableFieldsOrder(tableName);
         tokens.pop();
 
-        MatchToken("Left-Paren", tokens);
-        tokens.pop();
-
-        //Verify that column names in query match those in table fields
+        //If column names to insert into are provided, read them in.
+        //Otherwise, the column names to insert into are the same as the columns in the table in that order
         vector<string> columnsToInsert;
-        while (tokens.size() > 0 && tokens.front().GetType() != "Right-Paren") {
-            if (columnsToInsert.size() > 0) {
-                MatchToken("Comma", tokens);
-                tokens.pop();
-            }
-            string columnName = MatchToken("Identifier", tokens);
+        if (tokens.front().GetType() == "Left-Paren") {
+            MatchToken("Left-Paren", tokens);
             tokens.pop();
-            VerifyColumnName(columnName, fields);
-            columnsToInsert.push_back(columnName);
-        }
 
-        MatchToken("Right-Paren", tokens);
-        tokens.pop();
+            //Verify that column names in query match those in table fields
+            while (tokens.size() > 0 && tokens.front().GetType() != "Right-Paren") {
+                if (columnsToInsert.size() > 0) {
+                    MatchToken("Comma", tokens);
+                    tokens.pop();
+                }
+                string columnName = MatchToken("Identifier", tokens);
+                tokens.pop();
+                VerifyColumnName(columnName, fields);
+                columnsToInsert.push_back(columnName);
+            }
+
+            MatchToken("Right-Paren", tokens);
+            tokens.pop();
+        }
+        else {
+            columnsToInsert = fieldOrder;
+        }
+        
 
         MatchToken("Values", tokens);
         tokens.pop();
@@ -428,6 +453,7 @@ void SQL_Query(string query) {
         MatchToken("Left-Paren", tokens);
         tokens.pop();
 
+        //Read in values to insert. Store in map along with column names
         map<string,string> columnAndValues;
         while (tokens.size() > 0 && tokens.front().GetType() != "Right-Paren") {
             if (columnAndValues.size() > 0) {
@@ -437,6 +463,7 @@ void SQL_Query(string query) {
             string value;
             string type;
             if (tokens.front().GetType() == "INT") {
+                //Turn all decimals into hex before storing
                 value = DecimalToHex(MatchToken("INT", tokens));
                 type = "INT";
             }
@@ -450,6 +477,8 @@ void SQL_Query(string query) {
                 Throw_Error(ss.str());
             }
             tokens.pop();
+
+            //Ensure that the datatype of the column matches the datatype of the value being inserted
             if (fields.at(columnsToInsert.at(columnAndValues.size())) == type) {
                 columnAndValues.insert(pair<string,string>(columnsToInsert.at(columnAndValues.size()), value));
             }
@@ -460,6 +489,7 @@ void SQL_Query(string query) {
             }
         }
 
+        //If the number of columns to insert into does not match the number of values provided, throw an error
         if (columnsToInsert.size() != columnAndValues.size()) {
             Throw_Error("Incorrect number of columns");
         }
@@ -467,7 +497,7 @@ void SQL_Query(string query) {
         MatchToken("Right-Paren", tokens);
         tokens.pop();
 
-        //Take our map of columns and new values and create append string
+        //Take our map of columns and new values and create the append string
         stringstream ss;
         map<string,string>::iterator it;
 
@@ -487,7 +517,14 @@ void SQL_Query(string query) {
 
     }
     else if (tokens.front().GetType() == "Select") {
+        tokens.pop();
 
+        //Read fields from table
+        string tableName = GetTableName(tokens);
+        map<string, string> fields = GetTableFieldsMap(tableName);
+        vector<string> fieldOrder = GetTableFieldsOrder(tableName);
+        tokens.pop();
+        
     }
     else if (tokens.front().GetType() == "Delete") {
 
