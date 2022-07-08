@@ -10,6 +10,7 @@
 #include<map>
 #include<ctype.h>
 #include<stdarg.h>
+#include<typeinfo>
 
 using namespace std;
 
@@ -348,21 +349,8 @@ void AppendToTable(string tableName, string newLine) {
     outFile.close();
 }
 
-void SQL_Query(int numArgs,...) {
-    string query;
-    va_list valist;
-    vector<string> arguments;
-    va_start(valist, numArgs);
-    for (int i = 0; i < numArgs; ++i) {
-        stringstream ss;
-        ss << va_arg(valist, auto);
-        arguments.push_back(ss.str());
-    }
-    va_end(valist);
-    for (string arg: arguments) {
-        cout << arg << endl;
-    }
-    return;
+void SQL_Query(string query) {
+
     queue<Token> tokens = GetTokens(query);
     
     //Determine which operation is being performed
