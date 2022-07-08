@@ -8,10 +8,13 @@
 #include<queue>
 #include<utility>
 #include<map>
+#include<set>
 #include<ctype.h>
 
 using namespace std;
 
+typedef vector<map<string,string>> SQL_Query_Results;
+SQL_Query_Results undefined;
 class Token {
     private:
     string type;
@@ -62,13 +65,13 @@ string DecimalToHex(string decimalNumber) {
     return ss.str();
 }
 
-int HexToDecimal(string hexNumber) {
+string HexToDecimal(string hexNumber) {
     stringstream ss;
     if (hexNumber.at(0) == '-') {
         ss << "-";
         hexNumber = hexNumber.substr(1);
     }
-    int decimalNumber;
+    string decimalNumber;
     ss << std::hex << hexNumber;
     ss >> decimalNumber;
     return (decimalNumber);
@@ -271,13 +274,6 @@ queue<Token> GetTokens(string input) {
     return tokens;
 }
 
-//Return the table name provided in the SQL_Query Input
-string GetTableName(queue<Token> &tokens) {
-    string tableName = MatchToken("Identifier", tokens);
-    tableName += ".txt";
-    return tableName;
-}
-
 //Verifies that the front token in the queue is of the correct type.
 string MatchToken(string type, queue<Token> &tokens) {
     if (tokens.size() == 0) {
@@ -289,6 +285,42 @@ string MatchToken(string type, queue<Token> &tokens) {
         Throw_Error(ss.str());
     }
     return tokens.front().GetValue();
+}
+
+//Return the table name provided in the SQL_Query Input
+string GetTableName(queue<Token> &tokens) {
+    string tableName = MatchToken("Identifier", tokens);
+    tableName += ".txt";
+    return tableName;
+}
+
+//Return every table column and its position stored in a map
+map<string,int> GetTableFieldsOrderMap(string tableName) {
+    map<string,int> fields;
+    ifstream inFile;
+    inFile.open(tableName);
+    if (!inFile.is_open()) {
+        stringstream ss;
+        ss << "Unable to open table: " << tableName;
+        Throw_Error(ss.str());
+    }
+    string fieldsLine;
+    getline(inFile, fieldsLine);
+    queue<Token> tokens = GetTokens(fieldsLine);
+    int columnNumber = 0;
+    while (tokens.size() > 0 && tokens.front().GetType() != "Period") {
+        string temp;
+        temp = MatchToken("Identifier", tokens);
+        tokens.pop();
+        MatchToken("Datatype", tokens);
+        tokens.pop();
+        MatchToken("Comma", tokens);
+        tokens.pop();
+        fields.insert(pair<string,int>(temp, columnNumber));
+        ++columnNumber;
+    }
+    inFile.close();
+    return fields;
 }
 
 //Returns the column name order of a table in a vector
@@ -367,7 +399,61 @@ void AppendToTable(string tableName, string newLine) {
     outFile.close();
 }
 
-void SQL_Query(string query) {
+SQL_Query_Results SelectRows(string tableName, vector<string> &columnNames) {
+    SQL_Query_Results results;
+    map<string,int> fieldOrder = GetTableFieldsOrderMap(tableName);
+
+    //Save positions of columns to store
+    set<int> positions;
+    for (unsigned long int i = 0; i < columnNames.size(); ++i) {
+        positions.insert(fieldOrder.at(columnNames.at(i)));
+    }
+
+    ifstream inFile;
+    inFile.open(tableName);
+    if (!inFile.is_open()) {
+        stringstream ss;
+        ss << "Could not read from " << tableName;
+        Throw_Error(ss.str());
+    }
+    string tableRow;
+    getline(inFile, tableRow);
+    while (getline(inFile, tableRow)) {
+        queue<Token> tokens = GetTokens(tableRow);
+        int columnNumber = 0;
+        while (tokens.size() > 0 && tokens.front().GetType() != "Period") {
+            if (columnNumber > 0) {
+                MatchToken("Comma", tokens);
+                tokens.pop();
+            }
+            if (positions.find(columnNumber) != positions.end()) {
+                string value;
+                string type;
+                if (tokens.front().GetType() == "INT") {
+                    //Turn all hex into decimal before storing
+                    value = HexToDecimal(MatchToken("INT", tokens));
+                    type = "INT";
+                }
+                else if (tokens.front().GetType() == "TEXT") {
+                    value = MatchToken("TEXT", tokens);
+                    type = "TEXT";
+                }
+                else {
+                    stringstream ss;
+                    ss << "Invalid datatype: " << tokens.front().GetValue() << " is not a valid datatype";
+                    Throw_Error(ss.str());
+                }
+            }
+            tokens.pop();
+            ++columnNumber;
+        }
+    }   
+
+    inFile.close();
+    return results;
+}
+
+void SQL_Query(string query, SQL_Query_Results &results = undefined) {
 
     //Get tokens from input
     queue<Token> tokens = GetTokens(query);
@@ -518,12 +604,36 @@ void SQL_Query(string query) {
     }
     else if (tokens.front().GetType() == "Select") {
         tokens.pop();
-
+        queue<Token> tokensCopy = tokens;
+        while (tokensCopy.front().GetType() != "From") {
+            tokensCopy.pop();
+        }
+        tokensCopy.pop();
         //Read fields from table
-        string tableName = GetTableName(tokens);
+        string tableName = GetTableName(tokensCopy);
         map<string, string> fields = GetTableFieldsMap(tableName);
-        vector<string> fieldOrder = GetTableFieldsOrder(tableName);
-        tokens.pop();
+        set<string> fieldOrder = GetTableFieldsOrderSet(tableName);
+        tokensCopy = queue<Token>();
+
+        vector<string> columnsSelected;
+        //Read the columns selected in the SQL_QUERY Input
+        while (tokens.size() > 0 && tokens.front().GetType() != "From") {
+            if (columnsSelected.size() > 0) {
+                MatchToken("Comma", tokens);
+                tokens.pop();
+            }
+            if (tokens.front().GetType() == "Star") {
+                columnsSelected.clear();
+                columnsSelected = fieldOrder;
+                break;
+            }
+            string columnName = MatchToken("Identifier", tokens);
+            tokens.pop();
+            VerifyColumnName(columnName, fields);
+            columnsSelected.push_back(columnName);
+        }
+
+        results = SelectRows(tableName, columnsSelected);
         
     }
     else if (tokens.front().GetType() == "Delete") {
