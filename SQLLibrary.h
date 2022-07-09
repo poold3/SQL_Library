@@ -22,10 +22,6 @@ class Token {
     public:
     Token(string type, string value) {
         this->type = type;
-        if (type == "Text" && value.at(0) == '\'') {
-            value = value.substr(1);
-            value = value.substr(0, value.length() - 1);
-        }
         this->value = value;
     }
 
@@ -77,6 +73,11 @@ string HexToDecimal(string hexNumber) {
     return (decimalNumber);
 }
 
+void RemoveSingleQuotes(string &value) {
+    value = value.substr(1);
+    value = value.substr(0, value.length() - 1);
+}
+
 //Find the number of chars in the string until the end single-quote character
 int FindTextLength(string input) {
     int index = 1;
@@ -103,7 +104,7 @@ int FindIdentifierLength(string input) {
 //Find the number of chars until the first non-numeric character
 int FindIntLength(string input) {
     int index = 1;
-    while (index < (int)input.length() && isdigit(input.at(index))) {
+    while (index < (int)input.length() && isalnum(input.at(index))) {
         ++index;
     }
     return index;
@@ -402,11 +403,12 @@ void AppendToTable(string tableName, string newLine) {
 SQL_Query_Results SelectRows(string tableName, vector<string> &columnNames) {
     SQL_Query_Results results;
     map<string,int> fieldOrder = GetTableFieldsOrderMap(tableName);
+    map<string,string> fields = GetTableFieldsMap(tableName);
 
     //Save positions of columns to store
-    set<int> positions;
+    map<int, string> positions;
     for (unsigned long int i = 0; i < columnNames.size(); ++i) {
-        positions.insert(fieldOrder.at(columnNames.at(i)));
+        positions.insert(pair<int,string>(fieldOrder.at(columnNames.at(i)), columnNames.at(i)));
     }
 
     ifstream inFile;
@@ -417,8 +419,12 @@ SQL_Query_Results SelectRows(string tableName, vector<string> &columnNames) {
         Throw_Error(ss.str());
     }
     string tableRow;
+    //Read in first line because first line are the field definitions
     getline(inFile, tableRow);
+
+    //Iterate through the rest of the table rows
     while (getline(inFile, tableRow)) {
+        map<string,string> rowResults;
         queue<Token> tokens = GetTokens(tableRow);
         int columnNumber = 0;
         while (tokens.size() > 0 && tokens.front().GetType() != "Period") {
@@ -427,26 +433,25 @@ SQL_Query_Results SelectRows(string tableName, vector<string> &columnNames) {
                 tokens.pop();
             }
             if (positions.find(columnNumber) != positions.end()) {
+                //We know we need this column. Find what the datatype it is supposed to be.
+                string columnName = positions.at(columnNumber);
+                string dataType = fields.at(columnName);
                 string value;
-                string type;
-                if (tokens.front().GetType() == "INT") {
-                    //Turn all hex into decimal before storing
-                    value = HexToDecimal(MatchToken("INT", tokens));
-                    type = "INT";
+                if (dataType == "INT") {
+                    value = HexToDecimal(tokens.front().GetValue());
                 }
-                else if (tokens.front().GetType() == "TEXT") {
-                    value = MatchToken("TEXT", tokens);
-                    type = "TEXT";
+                else if (dataType == "TEXT") {
+                    value = tokens.front().GetValue();
                 }
                 else {
-                    stringstream ss;
-                    ss << "Invalid datatype: " << tokens.front().GetValue() << " is not a valid datatype";
-                    Throw_Error(ss.str());
+                    Throw_Error("Invalid datatype in table field");
                 }
+                rowResults.insert(pair<string,string>(columnName, value));
             }
             tokens.pop();
             ++columnNumber;
         }
+        results.push_back(rowResults);
     }   
 
     inFile.close();
@@ -555,6 +560,7 @@ void SQL_Query(string query, SQL_Query_Results &results = undefined) {
             }
             else if (tokens.front().GetType() == "TEXT") {
                 value = MatchToken("TEXT", tokens);
+                RemoveSingleQuotes(value);
                 type = "TEXT";
             }
             else {
@@ -612,7 +618,7 @@ void SQL_Query(string query, SQL_Query_Results &results = undefined) {
         //Read fields from table
         string tableName = GetTableName(tokensCopy);
         map<string, string> fields = GetTableFieldsMap(tableName);
-        set<string> fieldOrder = GetTableFieldsOrderSet(tableName);
+        vector<string> fieldOrder = GetTableFieldsOrder(tableName);
         tokensCopy = queue<Token>();
 
         vector<string> columnsSelected;
