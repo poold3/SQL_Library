@@ -34,6 +34,10 @@ class Token {
     string GetValue() {
         return value;
     }
+
+    void SetValue(string value) {
+        this->value = value;
+    }
 };
 
 
@@ -67,26 +71,27 @@ string HexToDecimal(string hexNumber) {
         ss << "-";
         hexNumber = hexNumber.substr(1);
     }
-    string decimalNumber;
+    int decimalNumber;
     ss << std::hex << hexNumber;
     ss >> decimalNumber;
-    return (decimalNumber);
+    return (to_string(decimalNumber));
 }
 
-void RemoveSingleQuotes(string &value) {
+string RemoveSingleQuotes(string value) {
     value = value.substr(1);
     value = value.substr(0, value.length() - 1);
+    return value;
 }
 
 //Find the number of chars in the string until the end single-quote character
 int FindTextLength(string input) {
     int index = 1;
     //Find the size of the text between single quotes.
-    while (input.at(index) != '\'' || (input.at(index) == '\'' && input.at(index - 1) == '\\')) {
-        ++index;
+    while (input.at(index) != '\'') {
         if (index == (int)(input.length() - 1)) {
             Throw_Error("Missing end quote!");
         }
+        ++index;
     }
     ++index;
     return index;
@@ -138,30 +143,30 @@ queue<Token> GetTokens(string input) {
         }
         else if (input.at(0) == '=') {
             size = 1;
-            type = "Equal";
+            type = "Logic";
         }
         else if (input.substr(0, 2) == "<>" || input.substr(0, 2) == "!=") {
             size = 2;
-            type = "Not Equal";
+            type = "Logic";
         }
         else if (input.at(0) == '>') {
             if (input.substr(0, 2) == ">=") {
                 size = 2;
-                type = "Greater or Equal";
+                type = "Logic";
             }
             else {
                 size = 1;
-                type = "Greater";
+                type = "Logic";
             }
         }
         else if (input.at(0) == '<') {
             if (input.substr(0, 2) == "<=") {
                 size = 2;
-                type = "Less or Equal";
+                type = "Logic";
             }
             else {
                 size = 1;
-                type = "Less";
+                type = "Logic";
             }
         }
         else if (input.substr(0, 6) == "SELECT") {
@@ -273,6 +278,16 @@ queue<Token> GetTokens(string input) {
     }
 
     return tokens;
+}
+
+//Verifies that the token is of the correct type.
+string MatchToken(string type, Token token) {
+    if (token.GetType() != type) {
+        stringstream ss;
+        ss << "Invalid Sql Input: " << type;
+        Throw_Error(ss.str());
+    }
+    return token.GetValue();
 }
 
 //Verifies that the front token in the queue is of the correct type.
@@ -400,7 +415,91 @@ void AppendToTable(string tableName, string newLine) {
     outFile.close();
 }
 
-SQL_Query_Results SelectRows(string tableName, vector<string> &columnNames) {
+string ConditionEval(string realValue, string condition, string testValue, string dataType) {
+    if (dataType == "INT") {
+        realValue = HexToDecimal(realValue);
+    }
+    
+    if (condition == "=") {
+        if (realValue == testValue) {
+            return "True";
+        }
+    }
+    else if (condition == "<>" || condition == "!=") {
+        if (realValue != testValue) {
+            return "True";
+        }
+    }
+    else {
+        //Convert both values into integers
+        int realValueInt;
+        int testValueInt;
+        stringstream ss;
+        ss << realValue << " " << testValue;
+        ss >> realValueInt >> testValueInt;
+        if (condition == "<") {
+            if (realValueInt < testValueInt) {
+                return "True";
+            }
+        }
+        else if (condition == "<=") {
+            if (realValueInt <= testValueInt) {
+                return "True";
+            }
+        }
+        else if (condition == ">") {
+            if (realValueInt > testValueInt) {
+                return "True";
+            }
+        }
+        else if (condition == ">=") {
+            if (realValueInt >= testValueInt) {
+                return "True";
+            }
+        }
+    }
+    
+    return "False";
+}
+
+//Calculate where a table row meets the WHERE requirements
+bool NeedRow(queue<Token> tokens, vector<Token> whereTokens, map<string,int> &fieldOrder, map<string,string> &fields) {
+    bool needRow = true;
+
+    //Construct vector of tokens that contain only the values from the row
+    vector<string> rowValues;
+    while (tokens.size() > 0) {
+        if (tokens.front().GetType() != "Comma" && tokens.front().GetType() != "Period") {
+            rowValues.push_back(tokens.front().GetValue());
+        }
+        tokens.pop();
+    }
+
+    //Build new whereTokens vector with true and false values
+    vector<Token> whereTokensCopy = whereTokens;
+    whereTokens.clear();
+    for (unsigned long i = 0; i < whereTokensCopy.size(); ++i) {
+        if (whereTokensCopy.at(i).GetType() == "Identifier") {
+            string columnName = MatchToken("Identifier", whereTokensCopy.at(i));
+            string condition = MatchToken("Logic", whereTokensCopy.at(i + 1));
+            string testValue = whereTokensCopy.at(i + 2).GetValue();
+            string realValue = rowValues.at(fieldOrder.at(columnName));
+            string dataType = fields.at(columnName);
+            //cout << columnName << ", " << condition << ", " << testValue << ", " << realValue << ", " << dataType << endl;
+            string evalResult = ConditionEval(realValue, condition, testValue, dataType);
+            //cout << evalResult << endl;
+            whereTokens.push_back(Token("Eval", evalResult));
+            i += 2;
+        }
+        else {
+            whereTokens.push_back(whereTokensCopy.at(i));
+        }
+    }
+    whereTokensCopy.clear();
+    return needRow;
+}
+
+SQL_Query_Results SelectRows(string tableName, vector<string> &columnNames, vector<Token> &whereTokens) {
     SQL_Query_Results results;
     map<string,int> fieldOrder = GetTableFieldsOrderMap(tableName);
     map<string,string> fields = GetTableFieldsMap(tableName);
@@ -426,32 +525,36 @@ SQL_Query_Results SelectRows(string tableName, vector<string> &columnNames) {
     while (getline(inFile, tableRow)) {
         map<string,string> rowResults;
         queue<Token> tokens = GetTokens(tableRow);
-        int columnNumber = 0;
-        while (tokens.size() > 0 && tokens.front().GetType() != "Period") {
-            if (columnNumber > 0) {
-                MatchToken("Comma", tokens);
+
+        //Use where tokens to determine if we need this row
+        if (whereTokens.size() == 0 || NeedRow(tokens, whereTokens, fieldOrder, fields) == true) {
+            int columnNumber = 0;
+            while (tokens.size() > 0 && tokens.front().GetType() != "Period") {
+                if (columnNumber > 0) {
+                    MatchToken("Comma", tokens);
+                    tokens.pop();
+                }
+                if (positions.find(columnNumber) != positions.end()) {
+                    //We know we need this column. Find what the datatype it is supposed to be.
+                    string columnName = positions.at(columnNumber);
+                    string dataType = fields.at(columnName);
+                    string value;
+                    if (dataType == "INT") {
+                        value = HexToDecimal(tokens.front().GetValue());
+                    }
+                    else if (dataType == "TEXT") {
+                        value = tokens.front().GetValue();
+                    }
+                    else {
+                        Throw_Error("Invalid datatype in table field");
+                    }
+                    rowResults.insert(pair<string,string>(columnName, value));
+                }
                 tokens.pop();
+                ++columnNumber;
             }
-            if (positions.find(columnNumber) != positions.end()) {
-                //We know we need this column. Find what the datatype it is supposed to be.
-                string columnName = positions.at(columnNumber);
-                string dataType = fields.at(columnName);
-                string value;
-                if (dataType == "INT") {
-                    value = HexToDecimal(tokens.front().GetValue());
-                }
-                else if (dataType == "TEXT") {
-                    value = tokens.front().GetValue();
-                }
-                else {
-                    Throw_Error("Invalid datatype in table field");
-                }
-                rowResults.insert(pair<string,string>(columnName, value));
-            }
-            tokens.pop();
-            ++columnNumber;
+            results.push_back(rowResults);
         }
-        results.push_back(rowResults);
     }   
 
     inFile.close();
@@ -560,7 +663,7 @@ void SQL_Query(string query, SQL_Query_Results &results = undefined) {
             }
             else if (tokens.front().GetType() == "TEXT") {
                 value = MatchToken("TEXT", tokens);
-                RemoveSingleQuotes(value);
+                value = RemoveSingleQuotes(value);
                 type = "TEXT";
             }
             else {
@@ -619,6 +722,30 @@ void SQL_Query(string query, SQL_Query_Results &results = undefined) {
         string tableName = GetTableName(tokensCopy);
         map<string, string> fields = GetTableFieldsMap(tableName);
         vector<string> fieldOrder = GetTableFieldsOrder(tableName);
+        tokensCopy.pop();
+
+        //Obtain WHERE tokens
+        vector<Token> whereTokens;
+        if (tokensCopy.size() > 0 && tokensCopy.front().GetType() == "Where") {
+            MatchToken("Where", tokensCopy);
+            tokensCopy.pop();
+            whereTokens.push_back(Token("Left-Paren", "("));
+            while (tokensCopy.size() > 0 && tokensCopy.front().GetType() != "Order By") {
+                //cout << tokensCopy.front().GetType() << ": " << tokensCopy.front().GetValue() << endl;
+                if (tokensCopy.front().GetType() == "Identifier") {
+                    VerifyColumnName(tokensCopy.front().GetValue(), fields);
+                }
+                else if (tokensCopy.front().GetType() == "INT") {
+                    tokensCopy.front().SetValue(tokensCopy.front().GetValue());
+                }
+                else if (tokensCopy.front().GetType() == "TEXT") {
+                    tokensCopy.front().SetValue(RemoveSingleQuotes(tokensCopy.front().GetValue()));
+                }
+                whereTokens.push_back(tokensCopy.front());
+                tokensCopy.pop();
+            }
+            whereTokens.push_back(Token("Right-Paren", ")"));
+        }
         tokensCopy = queue<Token>();
 
         vector<string> columnsSelected;
@@ -639,7 +766,14 @@ void SQL_Query(string query, SQL_Query_Results &results = undefined) {
             columnsSelected.push_back(columnName);
         }
 
-        results = SelectRows(tableName, columnsSelected);
+        results = SelectRows(tableName, columnsSelected, whereTokens);
+        
+        //Match the FROM tablename
+        MatchToken("From", tokens);
+        tokens.pop();
+        MatchToken("Identifier", tokens);
+        tokens.pop();
+
         
     }
     else if (tokens.front().GetType() == "Delete") {
@@ -650,15 +784,5 @@ void SQL_Query(string query, SQL_Query_Results &results = undefined) {
     }
     return;
 }
-
-
-
-
-
-
-
-
-
-
 
 #endif
