@@ -173,6 +173,10 @@ queue<Token> GetTokens(string input) {
             size = 6;
             type = "Select";
         }
+        else if (input.substr(0, 8) == "DISTINCT") {
+            size = 8;
+            type = "Distinct";
+        }
         else if (input.substr(0, 12) == "CREATE TABLE") {
             size = 12;
             type = "Create";
@@ -573,7 +577,7 @@ bool ComputeLogic(vector<Token> tokens) {
     }
 }
 
-SQL_Query_Results SelectRows(string tableName, vector<string> &columnNames, vector<Token> &whereTokens) {
+SQL_Query_Results SelectRows(string tableName, vector<string> &columnNames, vector<Token> &whereTokens, bool distinct = false) {
     SQL_Query_Results results;
     map<string,int> fieldOrder = GetTableFieldsOrderMap(tableName);
     map<string,string> fields = GetTableFieldsMap(tableName);
@@ -793,6 +797,7 @@ void SQL_Query(string query, SQL_Query_Results &results = undefined) {
     }
     else if (tokens.front().GetType() == "Select") {
         tokens.pop();
+
         queue<Token> tokensCopy = tokens;
         while (tokensCopy.front().GetType() != "From") {
             tokensCopy.pop();
@@ -828,6 +833,13 @@ void SQL_Query(string query, SQL_Query_Results &results = undefined) {
         }
         tokensCopy = queue<Token>();
 
+        bool distinct = false;
+        if (tokens.front().GetType() == "Distinct") {
+            MatchToken("Distinct", tokens);
+            tokens.pop();
+            distinct = true;
+        }
+
         vector<string> columnsSelected;
         //Read the columns selected in the SQL_QUERY Input
         while (tokens.size() > 0 && tokens.front().GetType() != "From") {
@@ -846,7 +858,22 @@ void SQL_Query(string query, SQL_Query_Results &results = undefined) {
             columnsSelected.push_back(columnName);
         }
 
-        results = SelectRows(tableName, columnsSelected, whereTokens);
+        results = SelectRows(tableName, columnsSelected, whereTokens, distinct);
+        cout << "Normal results:" << endl;
+        for (map<string,string> row: results) {
+            cout << row.at("id") << " " << row.at("name") << " " << row.at("age") << endl;
+        }
+        cout << "Distinct results:" << endl;
+        set<map<string,string>> distinctResults;
+        if (distinct == true) {
+            for (map<string,string> row: results) {
+                distinctResults.insert(row);
+            }
+            for (map<string,string> distinctRow: distinctResults) {
+                cout << distinctRow.at("id") << " " << distinctRow.at("name") << " " << distinctRow.at("age") << endl;
+            }
+
+        }
         
         while (tokens.size() > 0 && tokens.front().GetType() != "From") {
             tokens.pop();
