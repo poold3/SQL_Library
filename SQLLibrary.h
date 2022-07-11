@@ -416,10 +416,6 @@ void AppendToTable(string tableName, string newLine) {
 }
 
 string ConditionEval(string realValue, string condition, string testValue, string dataType) {
-    if (dataType == "INT") {
-        realValue = HexToDecimal(realValue);
-    }
-    
     if (condition == "=") {
         if (realValue == testValue) {
             return "True";
@@ -431,14 +427,19 @@ string ConditionEval(string realValue, string condition, string testValue, strin
         }
     }
     else {
-        //Convert both values into integers
         int realValueInt;
         int testValueInt;
-        stringstream ss;
-        ss << realValue << " " << testValue;
-        ss >> realValueInt >> testValueInt;
+        if (dataType == "INT") {
+            //Convert both values into integers
+            stringstream ss;
+            ss << realValue << " " << testValue;
+            ss >> realValueInt >> testValueInt;
+        }
         if (condition == "<") {
-            if (realValueInt < testValueInt) {
+            if (dataType == "INT" && realValueInt < testValueInt) {
+                return "True";
+            }
+            else if (realValue < testValue) {
                 return "True";
             }
         }
@@ -446,14 +447,23 @@ string ConditionEval(string realValue, string condition, string testValue, strin
             if (realValueInt <= testValueInt) {
                 return "True";
             }
+            else if (realValue <= testValue) {
+                return "True";
+            }
         }
         else if (condition == ">") {
             if (realValueInt > testValueInt) {
                 return "True";
             }
+            else if (realValue > testValue) {
+                return "True";
+            }
         }
         else if (condition == ">=") {
             if (realValueInt >= testValueInt) {
+                return "True";
+            }
+            else if (realValue >= testValue) {
                 return "True";
             }
         }
@@ -463,9 +473,7 @@ string ConditionEval(string realValue, string condition, string testValue, strin
 }
 
 //Calculate where a table row meets the WHERE requirements
-bool NeedRow(queue<Token> tokens, vector<Token> whereTokens, map<string,int> &fieldOrder, map<string,string> &fields) {
-    bool needRow = true;
-
+vector<Token> RunConditionEval(queue<Token> tokens, vector<Token> whereTokens, map<string,int> &fieldOrder, map<string,string> &fields) {
     //Construct vector of tokens that contain only the values from the row
     vector<string> rowValues;
     while (tokens.size() > 0) {
@@ -475,19 +483,20 @@ bool NeedRow(queue<Token> tokens, vector<Token> whereTokens, map<string,int> &fi
         tokens.pop();
     }
 
-    //Build new whereTokens vector with true and false values
+    //Build new whereTokens vector with evaluated conditions: true and false values
     vector<Token> whereTokensCopy = whereTokens;
     whereTokens.clear();
     for (unsigned long i = 0; i < whereTokensCopy.size(); ++i) {
-        if (whereTokensCopy.at(i).GetType() == "Identifier") {
+        if (i < whereTokensCopy.size() - 3 && whereTokensCopy.at(i).GetType() == "Identifier") {
             string columnName = MatchToken("Identifier", whereTokensCopy.at(i));
             string condition = MatchToken("Logic", whereTokensCopy.at(i + 1));
             string testValue = whereTokensCopy.at(i + 2).GetValue();
             string realValue = rowValues.at(fieldOrder.at(columnName));
             string dataType = fields.at(columnName);
-            //cout << columnName << ", " << condition << ", " << testValue << ", " << realValue << ", " << dataType << endl;
+            if (dataType == "INT") {
+                realValue = HexToDecimal(realValue);
+            }
             string evalResult = ConditionEval(realValue, condition, testValue, dataType);
-            //cout << evalResult << endl;
             whereTokens.push_back(Token("Eval", evalResult));
             i += 2;
         }
@@ -496,7 +505,72 @@ bool NeedRow(queue<Token> tokens, vector<Token> whereTokens, map<string,int> &fi
         }
     }
     whereTokensCopy.clear();
-    return needRow;
+
+    return whereTokens;
+}
+
+bool ComputeLogic(vector<Token> tokens) {
+    while (tokens.size() > 1) {
+        //First, look for True/False values alone within parenthesis
+        for (unsigned long i = 0; i < tokens.size(); ++i) {
+            if (tokens.at(i).GetType() == "Left-Paren") {
+                if (tokens.at(i + 1).GetType() == "Eval" && tokens.at(i + 2).GetType() == "Right-Paren") {
+                    tokens.erase(tokens.begin() + i + 2);
+                    tokens.erase(tokens.begin() + i);
+                }
+            }
+        }
+
+        //Look for ANDs because they have precedence over ORs
+        for (unsigned long i = 0; i < tokens.size(); ++i) {
+            if (tokens.at(i).GetType() == "And") {
+                if (tokens.at(i - 1).GetType() == "Eval" && tokens.at(i + 1).GetType() == "Eval") {
+                    string valueOne = tokens.at(i - 1).GetValue();
+                    string valueTwo = tokens.at(i + 1).GetValue();
+                    string newValue;
+                    if (valueOne != valueTwo) {
+                        newValue = "False";
+                    }
+                    else if (valueOne == "True") {
+                        newValue = "True";
+                    }
+                    else {
+                        newValue = "False";
+                    }
+                    tokens.erase(tokens.begin() + i - 1, tokens.begin() + i + 2);
+                    --i;
+                    tokens.insert(tokens.begin() + i, Token("Eval", newValue));
+                }
+            }
+        }
+
+        //Look for ORs
+        for (unsigned long i = 0; i < tokens.size(); ++i) {
+            if (tokens.at(i).GetType() == "Or") {
+                if (tokens.at(i - 1).GetType() == "Eval" && tokens.at(i + 1).GetType() == "Eval") {
+                    string valueOne = tokens.at(i - 1).GetValue();
+                    string valueTwo = tokens.at(i + 1).GetValue();
+                    string newValue;
+                    if (valueOne == "True" || valueTwo == "True") {
+                        newValue = "True";
+                    }
+                    else {
+                        newValue = "False";
+                    }
+                    tokens.erase(tokens.begin() + i - 1, tokens.begin() + i + 2);
+                    --i;
+                    tokens.insert(tokens.begin() + i, Token("Eval", newValue));
+                }
+            }
+        }
+    }
+
+    if (tokens.at(0).GetValue() == "True") {
+        return true;
+    }
+    else {
+        return false;
+    }
 }
 
 SQL_Query_Results SelectRows(string tableName, vector<string> &columnNames, vector<Token> &whereTokens) {
@@ -526,8 +600,14 @@ SQL_Query_Results SelectRows(string tableName, vector<string> &columnNames, vect
         map<string,string> rowResults;
         queue<Token> tokens = GetTokens(tableRow);
 
+        bool isNeeded;
+        if (whereTokens.size() != 0) {
+            vector<Token> semiEvaluated = RunConditionEval(tokens, whereTokens, fieldOrder, fields);
+            isNeeded = ComputeLogic(semiEvaluated);
+        }
+
         //Use where tokens to determine if we need this row
-        if (whereTokens.size() == 0 || NeedRow(tokens, whereTokens, fieldOrder, fields) == true) {
+        if (whereTokens.size() == 0 || isNeeded == true) {
             int columnNumber = 0;
             while (tokens.size() > 0 && tokens.front().GetType() != "Period") {
                 if (columnNumber > 0) {
@@ -768,6 +848,10 @@ void SQL_Query(string query, SQL_Query_Results &results = undefined) {
 
         results = SelectRows(tableName, columnsSelected, whereTokens);
         
+        while (tokens.size() > 0 && tokens.front().GetType() != "From") {
+            tokens.pop();
+        }
+
         //Match the FROM tablename
         MatchToken("From", tokens);
         tokens.pop();

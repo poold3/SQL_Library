@@ -20,12 +20,12 @@ int main () {
     }
     */
     SQL_Query_Results results;
-    SQL_Query("SELECT name FROM table WHERE id <= 3 OR name = 'Olivia'", results);
+    SQL_Query("SELECT * FROM table WHERE age < 30 AND name = 'Kelly' OR id = 5", results);
     
-    //cout << results.size() << " rows returned." << endl;
-    //for (map<string,string> row: results) {
-        //cout << row.at("name") << endl;
-    //}
+    cout << results.size() << " rows returned." << endl;
+    for (map<string,string> row: results) {
+        cout << row.at("id") << " " << row.at("name") << " " << row.at("age") << endl;
+    }
 
     return 0;
 }
