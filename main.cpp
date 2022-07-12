@@ -19,13 +19,12 @@ int main () {
         ++nameId;
     }
     */
-    SQL_Query_Results results;
-    SQL_Query("SELECT DISTINCT * FROM table", results);
-    /*
+    SQL_Query_Results results = SQL_Query_Select("SELECT DISTINCT id,name FROM table");
+    
     cout << results.size() << " rows returned." << endl;
     for (map<string,string> row: results) {
-        cout << row.at("name") << endl;
+        cout << row.at("id") << " " << row.at("name") << endl;
     }
-    */
+    
     return 0;
 }

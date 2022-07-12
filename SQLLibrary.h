@@ -595,9 +595,13 @@ SQL_Query_Results SelectRows(string tableName, vector<string> &columnNames, vect
         ss << "Could not read from " << tableName;
         Throw_Error(ss.str());
     }
-    string tableRow;
+
     //Read in first line because first line are the field definitions
+    string tableRow;
     getline(inFile, tableRow);
+
+    //Declare set for DISTINCT Eval
+    set<map<string,string>> distinctResults;
 
     //Iterate through the rest of the table rows
     while (getline(inFile, tableRow)) {
@@ -637,7 +641,13 @@ SQL_Query_Results SelectRows(string tableName, vector<string> &columnNames, vect
                 tokens.pop();
                 ++columnNumber;
             }
-            results.push_back(rowResults);
+            if (distinct == false) {
+                results.push_back(rowResults);
+            }
+            else if (distinctResults.find(rowResults) == distinctResults.end()) {
+                results.push_back(rowResults);
+            }
+            distinctResults.insert(rowResults);
         }
     }   
 
@@ -645,255 +655,247 @@ SQL_Query_Results SelectRows(string tableName, vector<string> &columnNames, vect
     return results;
 }
 
-void SQL_Query(string query, SQL_Query_Results &results = undefined) {
-
+void SQL_Query_Create(string query) {
     //Get tokens from input
     queue<Token> tokens = GetTokens(query);
-    
-    //Determine which operation is being performed
-    if (tokens.front().GetType() == "Create") {
-        tokens.pop();
-        
-        //Create new table
-        string tableName = GetTableName(tokens);
-        ofstream outFile;
-        outFile.open(tableName);
-        if (!outFile.is_open()) {
-            stringstream ss;
-            ss << "Unable to create new table: " << tableName;
-            Throw_Error(ss.str());
-        }
-        tokens.pop();
+    MatchToken("Create", tokens);
+    tokens.pop();
 
-        //Read in column names and datatypes
-        MatchToken("Left-Paren", tokens);
-        tokens.pop();
-        int numColumns = 0;
-        while (tokens.size() > 0 && tokens.front().GetType() != "Right-Paren") {
-            if (numColumns > 0) {
-                MatchToken("Comma", tokens);
-                tokens.pop();
-            }
-            string columnName = MatchToken("Identifier", tokens);
-            tokens.pop();
-            string dataType = MatchToken("Datatype", tokens);
-            tokens.pop();
-            outFile << columnName << " " << dataType << ",";
-            ++numColumns;
-        }
-        MatchToken("Right-Paren", tokens);
-        tokens.pop();
-        outFile << "." << endl;
-        outFile.close();
-    }
-    else if (tokens.front().GetType() == "Update") {
-
-    }
-    else if (tokens.front().GetType() == "Insert") {
-        tokens.pop();
-
-        //Read fields from table
-        string tableName = GetTableName(tokens);
-        map<string, string> fields = GetTableFieldsMap(tableName);
-        vector<string> fieldOrder = GetTableFieldsOrder(tableName);
-        tokens.pop();
-
-        //If column names to insert into are provided, read them in.
-        //Otherwise, the column names to insert into are the same as the columns in the table in that order
-        vector<string> columnsToInsert;
-        if (tokens.front().GetType() == "Left-Paren") {
-            MatchToken("Left-Paren", tokens);
-            tokens.pop();
-
-            //Verify that column names in query match those in table fields
-            while (tokens.size() > 0 && tokens.front().GetType() != "Right-Paren") {
-                if (columnsToInsert.size() > 0) {
-                    MatchToken("Comma", tokens);
-                    tokens.pop();
-                }
-                string columnName = MatchToken("Identifier", tokens);
-                tokens.pop();
-                VerifyColumnName(columnName, fields);
-                columnsToInsert.push_back(columnName);
-            }
-
-            MatchToken("Right-Paren", tokens);
-            tokens.pop();
-        }
-        else {
-            columnsToInsert = fieldOrder;
-        }
-        
-
-        MatchToken("Values", tokens);
-        tokens.pop();
-
-        MatchToken("Left-Paren", tokens);
-        tokens.pop();
-
-        //Read in values to insert. Store in map along with column names
-        map<string,string> columnAndValues;
-        while (tokens.size() > 0 && tokens.front().GetType() != "Right-Paren") {
-            if (columnAndValues.size() > 0) {
-                MatchToken("Comma", tokens);
-                tokens.pop();
-            }
-            string value;
-            string type;
-            if (tokens.front().GetType() == "INT") {
-                //Turn all decimals into hex before storing
-                value = DecimalToHex(MatchToken("INT", tokens));
-                type = "INT";
-            }
-            else if (tokens.front().GetType() == "TEXT") {
-                value = MatchToken("TEXT", tokens);
-                value = RemoveSingleQuotes(value);
-                type = "TEXT";
-            }
-            else {
-                stringstream ss;
-                ss << "Invalid datatype: " << tokens.front().GetValue() << " is not a valid datatype";
-                Throw_Error(ss.str());
-            }
-            tokens.pop();
-
-            //Ensure that the datatype of the column matches the datatype of the value being inserted
-            if (fields.at(columnsToInsert.at(columnAndValues.size())) == type) {
-                columnAndValues.insert(pair<string,string>(columnsToInsert.at(columnAndValues.size()), value));
-            }
-            else {
-                stringstream ss;
-                ss << "Invalid datatype: Column '" << columnsToInsert.at(columnAndValues.size()) << "' cannot accept the value " << value;
-                Throw_Error(ss.str());
-            }
-        }
-
-        //If the number of columns to insert into does not match the number of values provided, throw an error
-        if (columnsToInsert.size() != columnAndValues.size()) {
-            Throw_Error("Incorrect number of columns");
-        }
-
-        MatchToken("Right-Paren", tokens);
-        tokens.pop();
-
-        //Take our map of columns and new values and create the append string
+    //Create new table
+    string tableName = GetTableName(tokens);
+    ofstream outFile;
+    outFile.open(tableName);
+    if (!outFile.is_open()) {
         stringstream ss;
-        map<string,string>::iterator it;
-
-        for (string field : fieldOrder) {
-            it = columnAndValues.find(field);
-            if (it != columnAndValues.end()) {
-                ss << it->second << ",";
-            }
-            else {
-                ss << "NULL,";
-            }
-        }
-        ss << "." << endl;
-
-        //Append to table
-        AppendToTable(tableName, ss.str());
-
+        ss << "Unable to create new table: " << tableName;
+        Throw_Error(ss.str());
     }
-    else if (tokens.front().GetType() == "Select") {
+    tokens.pop();
+
+    //Read in column names and datatypes
+    MatchToken("Left-Paren", tokens);
+    tokens.pop();
+    int numColumns = 0;
+    while (tokens.size() > 0 && tokens.front().GetType() != "Right-Paren") {
+        if (numColumns > 0) {
+            MatchToken("Comma", tokens);
+            tokens.pop();
+        }
+        string columnName = MatchToken("Identifier", tokens);
+        tokens.pop();
+        string dataType = MatchToken("Datatype", tokens);
+        tokens.pop();
+        outFile << columnName << " " << dataType << ",";
+        ++numColumns;
+    }
+    MatchToken("Right-Paren", tokens);
+    tokens.pop();
+    outFile << "." << endl;
+    outFile.close();
+}
+
+void SQL_Query_Update(string query) {
+    //Get tokens from input
+    queue<Token> tokens = GetTokens(query);
+    MatchToken("Update", tokens);
+    tokens.pop();
+}
+
+void SQL_Query_Insert(string query) {
+    //Get tokens from input
+    queue<Token> tokens = GetTokens(query);
+    MatchToken("Insert", tokens);
+    tokens.pop();
+
+    //Read fields from table
+    string tableName = GetTableName(tokens);
+    map<string, string> fields = GetTableFieldsMap(tableName);
+    vector<string> fieldOrder = GetTableFieldsOrder(tableName);
+    tokens.pop();
+
+    //If column names to insert into are provided, read them in.
+    //Otherwise, the column names to insert into are the same as the columns in the table in that order
+    vector<string> columnsToInsert;
+    if (tokens.front().GetType() == "Left-Paren") {
+        MatchToken("Left-Paren", tokens);
         tokens.pop();
 
-        queue<Token> tokensCopy = tokens;
-        while (tokensCopy.front().GetType() != "From") {
-            tokensCopy.pop();
-        }
-        tokensCopy.pop();
-        //Read fields from table
-        string tableName = GetTableName(tokensCopy);
-        map<string, string> fields = GetTableFieldsMap(tableName);
-        vector<string> fieldOrder = GetTableFieldsOrder(tableName);
-        tokensCopy.pop();
-
-        //Obtain WHERE tokens
-        vector<Token> whereTokens;
-        if (tokensCopy.size() > 0 && tokensCopy.front().GetType() == "Where") {
-            MatchToken("Where", tokensCopy);
-            tokensCopy.pop();
-            whereTokens.push_back(Token("Left-Paren", "("));
-            while (tokensCopy.size() > 0 && tokensCopy.front().GetType() != "Order By") {
-                //cout << tokensCopy.front().GetType() << ": " << tokensCopy.front().GetValue() << endl;
-                if (tokensCopy.front().GetType() == "Identifier") {
-                    VerifyColumnName(tokensCopy.front().GetValue(), fields);
-                }
-                else if (tokensCopy.front().GetType() == "INT") {
-                    tokensCopy.front().SetValue(tokensCopy.front().GetValue());
-                }
-                else if (tokensCopy.front().GetType() == "TEXT") {
-                    tokensCopy.front().SetValue(RemoveSingleQuotes(tokensCopy.front().GetValue()));
-                }
-                whereTokens.push_back(tokensCopy.front());
-                tokensCopy.pop();
-            }
-            whereTokens.push_back(Token("Right-Paren", ")"));
-        }
-        tokensCopy = queue<Token>();
-
-        bool distinct = false;
-        if (tokens.front().GetType() == "Distinct") {
-            MatchToken("Distinct", tokens);
-            tokens.pop();
-            distinct = true;
-        }
-
-        vector<string> columnsSelected;
-        //Read the columns selected in the SQL_QUERY Input
-        while (tokens.size() > 0 && tokens.front().GetType() != "From") {
-            if (columnsSelected.size() > 0) {
+        //Verify that column names in query match those in table fields
+        while (tokens.size() > 0 && tokens.front().GetType() != "Right-Paren") {
+            if (columnsToInsert.size() > 0) {
                 MatchToken("Comma", tokens);
                 tokens.pop();
-            }
-            if (tokens.front().GetType() == "Star") {
-                columnsSelected.clear();
-                columnsSelected = fieldOrder;
-                break;
             }
             string columnName = MatchToken("Identifier", tokens);
             tokens.pop();
             VerifyColumnName(columnName, fields);
-            columnsSelected.push_back(columnName);
+            columnsToInsert.push_back(columnName);
         }
 
-        results = SelectRows(tableName, columnsSelected, whereTokens, distinct);
-        cout << "Normal results:" << endl;
-        for (map<string,string> row: results) {
-            cout << row.at("id") << " " << row.at("name") << " " << row.at("age") << endl;
-        }
-        cout << "Distinct results:" << endl;
-        set<map<string,string>> distinctResults;
-        if (distinct == true) {
-            for (map<string,string> row: results) {
-                distinctResults.insert(row);
-            }
-            for (map<string,string> distinctRow: distinctResults) {
-                cout << distinctRow.at("id") << " " << distinctRow.at("name") << " " << distinctRow.at("age") << endl;
-            }
-
-        }
-        
-        while (tokens.size() > 0 && tokens.front().GetType() != "From") {
-            tokens.pop();
-        }
-
-        //Match the FROM tablename
-        MatchToken("From", tokens);
+        MatchToken("Right-Paren", tokens);
         tokens.pop();
-        MatchToken("Identifier", tokens);
-        tokens.pop();
-
-        
-    }
-    else if (tokens.front().GetType() == "Delete") {
-
     }
     else {
-        Throw_Error("Invalid SQL Operation!");
+        columnsToInsert = fieldOrder;
     }
-    return;
+    
+
+    MatchToken("Values", tokens);
+    tokens.pop();
+
+    MatchToken("Left-Paren", tokens);
+    tokens.pop();
+
+    //Read in values to insert. Store in map along with column names
+    map<string,string> columnAndValues;
+    while (tokens.size() > 0 && tokens.front().GetType() != "Right-Paren") {
+        if (columnAndValues.size() > 0) {
+            MatchToken("Comma", tokens);
+            tokens.pop();
+        }
+        string value;
+        string type;
+        if (tokens.front().GetType() == "INT") {
+            //Turn all decimals into hex before storing
+            value = DecimalToHex(MatchToken("INT", tokens));
+            type = "INT";
+        }
+        else if (tokens.front().GetType() == "TEXT") {
+            value = MatchToken("TEXT", tokens);
+            value = RemoveSingleQuotes(value);
+            type = "TEXT";
+        }
+        else {
+            stringstream ss;
+            ss << "Invalid datatype: " << tokens.front().GetValue() << " is not a valid datatype";
+            Throw_Error(ss.str());
+        }
+        tokens.pop();
+
+        //Ensure that the datatype of the column matches the datatype of the value being inserted
+        if (fields.at(columnsToInsert.at(columnAndValues.size())) == type) {
+            columnAndValues.insert(pair<string,string>(columnsToInsert.at(columnAndValues.size()), value));
+        }
+        else {
+            stringstream ss;
+            ss << "Invalid datatype: Column '" << columnsToInsert.at(columnAndValues.size()) << "' cannot accept the value " << value;
+            Throw_Error(ss.str());
+        }
+    }
+
+    //If the number of columns to insert into does not match the number of values provided, throw an error
+    if (columnsToInsert.size() != columnAndValues.size()) {
+        Throw_Error("Incorrect number of columns");
+    }
+
+    MatchToken("Right-Paren", tokens);
+    tokens.pop();
+
+    //Take our map of columns and new values and create the append string
+    stringstream ss;
+    map<string,string>::iterator it;
+
+    for (string field : fieldOrder) {
+        it = columnAndValues.find(field);
+        if (it != columnAndValues.end()) {
+            ss << it->second << ",";
+        }
+        else {
+            ss << "NULL,";
+        }
+    }
+    ss << "." << endl;
+
+    //Append to table
+    AppendToTable(tableName, ss.str());
+}
+
+SQL_Query_Results SQL_Query_Select(string query) {
+    //Get tokens from input
+    queue<Token> tokens = GetTokens(query);
+    MatchToken("Select", tokens);
+    tokens.pop();
+
+    queue<Token> tokensCopy = tokens;
+    while (tokensCopy.front().GetType() != "From") {
+        tokensCopy.pop();
+    }
+    tokensCopy.pop();
+    //Read fields from table
+    string tableName = GetTableName(tokensCopy);
+    map<string, string> fields = GetTableFieldsMap(tableName);
+    vector<string> fieldOrder = GetTableFieldsOrder(tableName);
+    tokensCopy.pop();
+
+    //Obtain WHERE tokens
+    vector<Token> whereTokens;
+    if (tokensCopy.size() > 0 && tokensCopy.front().GetType() == "Where") {
+        MatchToken("Where", tokensCopy);
+        tokensCopy.pop();
+        whereTokens.push_back(Token("Left-Paren", "("));
+        while (tokensCopy.size() > 0 && tokensCopy.front().GetType() != "Order By") {
+            //cout << tokensCopy.front().GetType() << ": " << tokensCopy.front().GetValue() << endl;
+            if (tokensCopy.front().GetType() == "Identifier") {
+                VerifyColumnName(tokensCopy.front().GetValue(), fields);
+            }
+            else if (tokensCopy.front().GetType() == "INT") {
+                tokensCopy.front().SetValue(tokensCopy.front().GetValue());
+            }
+            else if (tokensCopy.front().GetType() == "TEXT") {
+                tokensCopy.front().SetValue(RemoveSingleQuotes(tokensCopy.front().GetValue()));
+            }
+            whereTokens.push_back(tokensCopy.front());
+            tokensCopy.pop();
+        }
+        whereTokens.push_back(Token("Right-Paren", ")"));
+    }
+    tokensCopy = queue<Token>();
+
+    bool distinct = false;
+    if (tokens.front().GetType() == "Distinct") {
+        MatchToken("Distinct", tokens);
+        tokens.pop();
+        distinct = true;
+    }
+
+    vector<string> columnsSelected;
+    //Read the columns selected in the SQL_QUERY Input
+    while (tokens.size() > 0 && tokens.front().GetType() != "From") {
+        if (columnsSelected.size() > 0) {
+            MatchToken("Comma", tokens);
+            tokens.pop();
+        }
+        if (tokens.front().GetType() == "Star") {
+            columnsSelected.clear();
+            columnsSelected = fieldOrder;
+            break;
+        }
+        string columnName = MatchToken("Identifier", tokens);
+        tokens.pop();
+        VerifyColumnName(columnName, fields);
+        columnsSelected.push_back(columnName);
+    }
+
+    SQL_Query_Results results = SelectRows(tableName, columnsSelected, whereTokens, distinct);
+    
+    while (tokens.size() > 0 && tokens.front().GetType() != "From") {
+        tokens.pop();
+    }
+
+    //Match the FROM tablename
+    MatchToken("From", tokens);
+    tokens.pop();
+    MatchToken("Identifier", tokens);
+    tokens.pop();
+
+    return results;
+}
+
+void SQL_Query_Delete(string query) {
+    //Get tokens from input
+    queue<Token> tokens = GetTokens(query);
+    MatchToken("Delete", tokens);
+    tokens.pop();
 }
 
 #endif
