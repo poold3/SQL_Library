@@ -893,9 +893,9 @@ SQL_Query_Results SQL_Query_Select(string query) {
         MatchToken("Order By", tokens);
         tokens.pop();
 
-        vector<pair<string,string>> orderColumns;
+        vector<pair<string,string>> orderByColumns;
         while (tokens.size() > 0) {
-            if (orderColumns.size() > 0) {
+            if (orderByColumns.size() > 0) {
                 MatchToken("Comma", tokens);
                 tokens.pop();
             }
@@ -903,20 +903,57 @@ SQL_Query_Results SQL_Query_Select(string query) {
             VerifyColumnName(columnName, fields);
             tokens.pop();
             if (tokens.size() > 0 && tokens.front().GetType() == "Desc") {
-                orderColumns.push_back(pair<string,string>(columnName, "Desc"));
+                orderByColumns.push_back(pair<string,string>(columnName, "Desc"));
                 tokens.pop();
             }
             else if (tokens.size() > 0 && tokens.front().GetType() == "Asc") {
-                orderColumns.push_back(pair<string,string>(columnName, "Asc"));
+                orderByColumns.push_back(pair<string,string>(columnName, "Asc"));
                 tokens.pop();
             }
             else {
-                orderColumns.push_back(pair<string,string>(columnName, "Asc"));
+                orderByColumns.push_back(pair<string,string>(columnName, "Asc"));
             }
         }
-        cout << "Size: " << orderColumns.size() << endl;
-        for (pair<string,string> column: orderColumns) {
-            cout << column.first << " " << column.second << endl;
+
+        //Sort
+
+        for (unsigned int i = 0; i < orderByColumns.size(); ++i) {
+            //First obtain a set that orders that column value for all results
+            set<string> orderedColumnValues;
+            string columnName = orderByColumns.at(i).first;
+            string orderOrder = orderByColumns.at(i).second;
+            cout << columnName << " " << orderOrder << endl;
+            for (map<string,string> result: results) {
+                orderedColumnValues.insert(result.at(columnName));
+            }
+            vector<map<string,string>> newResults;
+            if (i == 0) {
+                if (orderOrder == "Asc") {
+                    for (string column: orderedColumnValues) {
+                        for (map<string,string> row: results) {
+                            if (row.at(columnName) == column) {
+                                newResults.push_back(row);
+                            }
+                        }
+                    }
+                }
+                else {
+                    for (set<string>::reverse_iterator rit = orderedColumnValues.rbegin(); rit != orderedColumnValues.rend(); ++rit) {
+                        for (map<string,string> row: results) {
+                            if (row.at(columnName) == *rit) {
+                                newResults.push_back(row);
+                            }
+                        }
+                    }
+                }
+            }
+            else {
+
+            }
+            results.clear();
+            results = newResults;
+
+
         }
     }
 

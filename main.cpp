@@ -20,7 +20,7 @@ int main () {
         TEST
     }
     */
-    SQL_Query_Results results = SQL_Query_Select("SELECT DISTINCT id,name FROM table ORDER BY name");
+    SQL_Query_Results results = SQL_Query_Select("SELECT id,name FROM table ORDER BY name,id");
     
     cout << results.size() << " rows returned." << endl;
     for (map<string,string> row: results) {
