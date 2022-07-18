@@ -197,11 +197,11 @@ queue<Token> GetTokens(string input) {
             size = 3;
             type = "Set";
         }
-        else if (input.substr(0, 3) == "AND") {
+        else if (input.substr(0, 4) == "AND ") {
             size = 3;
             type = "And";
         }
-        else if (input.substr(0, 2) == "OR") {
+        else if (input.substr(0, 3) == "OR ") {
             size = 2;
             type = "Or";
         }
@@ -887,6 +887,38 @@ SQL_Query_Results SQL_Query_Select(string query) {
     tokens.pop();
     MatchToken("Identifier", tokens);
     tokens.pop();
+
+    //Computer Order By logic
+    if (tokens.size() > 0 && tokens.front().GetType() == "Order By") {
+        MatchToken("Order By", tokens);
+        tokens.pop();
+
+        vector<pair<string,string>> orderColumns;
+        while (tokens.size() > 0) {
+            if (orderColumns.size() > 0) {
+                MatchToken("Comma", tokens);
+                tokens.pop();
+            }
+            string columnName = MatchToken("Identifier", tokens);
+            VerifyColumnName(columnName, fields);
+            tokens.pop();
+            if (tokens.size() > 0 && tokens.front().GetType() == "Desc") {
+                orderColumns.push_back(pair<string,string>(columnName, "Desc"));
+                tokens.pop();
+            }
+            else if (tokens.size() > 0 && tokens.front().GetType() == "Asc") {
+                orderColumns.push_back(pair<string,string>(columnName, "Asc"));
+                tokens.pop();
+            }
+            else {
+                orderColumns.push_back(pair<string,string>(columnName, "Asc"));
+            }
+        }
+        cout << "Size: " << orderColumns.size() << endl;
+        for (pair<string,string> column: orderColumns) {
+            cout << column.first << " " << column.second << endl;
+        }
+    }
 
     return results;
 }

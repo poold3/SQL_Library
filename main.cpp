@@ -17,9 +17,10 @@ int main () {
         ss << "INSERT INTO table VALUES (" << nameId << ",'" << names.at(nameId - 1) << "')";
         SQL_Query(ss.str());
         ++nameId;
+        TEST
     }
     */
-    SQL_Query_Results results = SQL_Query_Select("SELECT DISTINCT id,name FROM table");
+    SQL_Query_Results results = SQL_Query_Select("SELECT DISTINCT id,name FROM table ORDER BY name");
     
     cout << results.size() << " rows returned." << endl;
     for (map<string,string> row: results) {
