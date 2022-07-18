@@ -20,9 +20,8 @@ int main () {
         TEST
     }
     */
-    SQL_Query_Results results = SQL_Query_Select("SELECT id,name FROM table ORDER BY name,id");
+    SQL_Query_Results results = SQL_Query_Select("SELECT id,name FROM table ORDER BY id,name");
     
-    cout << results.size() << " rows returned." << endl;
     for (map<string,string> row: results) {
         cout << row.at("id") << " " << row.at("name") << endl;
     }
