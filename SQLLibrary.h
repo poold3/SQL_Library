@@ -288,7 +288,7 @@ queue<Token> GetTokens(string input) {
 string MatchToken(string type, Token token) {
     if (token.GetType() != type) {
         stringstream ss;
-        ss << "Invalid Sql Input: " << type;
+        ss << "Invalid Sql Input. Expected " << type << ". Received " << token.GetType() << ": " << token.GetValue();
         Throw_Error(ss.str());
     }
     return token.GetValue();
@@ -301,7 +301,7 @@ string MatchToken(string type, queue<Token> &tokens) {
     }
     else if (tokens.front().GetType() != type) {
         stringstream ss;
-        ss << "Invalid Sql Input: " << type;
+        ss << "Invalid Sql Input. Expected " << type << ". Received " << tokens.front().GetType() << ": " << tokens.front().GetValue();
         Throw_Error(ss.str());
     }
     return tokens.front().GetValue();
@@ -474,6 +474,31 @@ string ConditionEval(string realValue, string condition, string testValue, strin
     }
     
     return "False";
+}
+
+//Calculate where a SQL_QUERY_RESULTS row meets the WHERE requirements
+vector<Token> RunConditionEval(map<string,string> row, vector<Token> whereTokens, map<string,string> &fields) {
+    //Build new whereTokens vector with evaluated conditions: true and false values
+    vector<Token> whereTokensCopy = whereTokens;
+    whereTokens.clear();
+    for (unsigned long i = 0; i < whereTokensCopy.size(); ++i) {
+        if (i < whereTokensCopy.size() - 3 && whereTokensCopy.at(i).GetType() == "Identifier") {
+            string columnName = MatchToken("Identifier", whereTokensCopy.at(i));
+            string condition = MatchToken("Logic", whereTokensCopy.at(i + 1));
+            string testValue = whereTokensCopy.at(i + 2).GetValue();
+            string realValue = row.at(columnName);
+            string dataType = fields.at(columnName);
+            string evalResult = ConditionEval(realValue, condition, testValue, dataType);
+            whereTokens.push_back(Token("Eval", evalResult));
+            i += 2;
+        }
+        else {
+            whereTokens.push_back(whereTokensCopy.at(i));
+        }
+    }
+    whereTokensCopy.clear();
+
+    return whereTokens;
 }
 
 //Calculate where a table row meets the WHERE requirements
@@ -671,6 +696,214 @@ set<int> OrderColumnValuesInt(string columnName, vector<map<string,string>> data
     return orderedColumnValues;
 }
 
+vector<Token> GetWhereTokens(queue<Token> &tokens, map<string,string> &fields) {
+    vector<Token> whereTokens;
+    if (tokens.size() > 0 && tokens.front().GetType() == "Where") {
+        MatchToken("Where", tokens);
+        tokens.pop();
+        whereTokens.push_back(Token("Left-Paren", "("));
+        while (tokens.size() > 0 && tokens.front().GetType() != "Order By") {
+            if (tokens.front().GetType() == "Identifier") {
+                VerifyColumnName(tokens.front().GetValue(), fields);
+            }
+            else if (tokens.front().GetType() == "INT") {
+                tokens.front().SetValue(tokens.front().GetValue());
+            }
+            else if (tokens.front().GetType() == "TEXT") {
+                tokens.front().SetValue(RemoveSingleQuotes(tokens.front().GetValue()));
+            }
+            whereTokens.push_back(tokens.front());
+            tokens.pop();
+        }
+        whereTokens.push_back(Token("Right-Paren", ")"));
+    }
+    return whereTokens;
+}
+
+vector<pair<string,string>> GetOrderByColumns(queue<Token> &tokens, map<string,string> &fields) {
+    vector<pair<string,string>> orderByColumns;
+    if (tokens.size() > 0 && tokens.front().GetType() == "Order By") {
+        MatchToken("Order By", tokens);
+        tokens.pop();
+
+        while (tokens.size() > 0) {
+            if (orderByColumns.size() > 0) {
+                MatchToken("Comma", tokens);
+                tokens.pop();
+            }
+            string columnName = MatchToken("Identifier", tokens);
+            VerifyColumnName(columnName, fields);
+            tokens.pop();
+            if (tokens.size() > 0 && tokens.front().GetType() == "Desc") {
+                orderByColumns.push_back(pair<string,string>(columnName, "Desc"));
+                tokens.pop();
+            }
+            else if (tokens.size() > 0 && tokens.front().GetType() == "Asc") {
+                orderByColumns.push_back(pair<string,string>(columnName, "Asc"));
+                tokens.pop();
+            }
+            else {
+                orderByColumns.push_back(pair<string,string>(columnName, "Asc"));
+            }
+        }
+    }
+    return orderByColumns;
+}
+
+map<string,string> GetSetValues(queue<Token> &tokens, map<string,string> &fields) {
+    map<string,string> newValues;
+    while (tokens.size() > 0 && tokens.front().GetType() != "Where") {
+        if (newValues.size() > 0) {
+            MatchToken("Comma", tokens);
+            tokens.pop();
+        }
+        string columnName = MatchToken("Identifier", tokens);
+        VerifyColumnName(columnName, fields);
+        tokens.pop();
+        string logicOperator = MatchToken("Logic", tokens);
+        tokens.pop();
+        if (logicOperator != "=") {
+            stringstream ss;
+            ss << "Invalid logical operator: " << logicOperator;
+            Throw_Error(ss.str());
+        }
+        string value;
+        if (fields.at(columnName) == "INT") {
+            value = MatchToken("INT", tokens);
+            tokens.pop();
+        }
+        else if (fields.at(columnName) == "TEXT") {
+            value = RemoveSingleQuotes(MatchToken("TEXT", tokens));
+            tokens.pop();
+        }
+        newValues.insert(pair<string,string>(columnName, value));
+    }
+    return newValues;
+}
+
+void SortResults(vector<map<string,string>> &results, vector<pair<string,string>> &orderByColumns, map<string,string> &fields) {
+    for (unsigned int i = 0; i < orderByColumns.size(); ++i) {
+        //First obtain a set that orders that column value for all results
+        vector<map<string,string>> newResults;
+        string columnName = orderByColumns.at(i).first;
+        string orderOrder = orderByColumns.at(i).second;
+        string dataType = fields.at(columnName);
+        if (dataType == "TEXT") {
+            set<string> orderedColumnValues = OrderColumnValuesText(columnName, results);
+            if (i == 0) {
+                if (orderOrder == "Asc") {
+                    for (string columnValue: orderedColumnValues) {
+                        for (map<string,string> row: results) {
+                            if (row.at(columnName) == columnValue) {
+                                newResults.push_back(row);
+                            }
+                        }
+                    }
+                }
+                else if (orderOrder == "Desc") {
+                    for (set<string>::reverse_iterator rit = orderedColumnValues.rbegin(); rit != orderedColumnValues.rend(); ++rit) {
+                        for (map<string,string> row: results) {
+                            if (row.at(columnName) == *rit) {
+                                newResults.push_back(row);
+                            }
+                        }
+                    }
+                }
+            }
+            else {
+                int sameSize = 0;
+                for (unsigned long j = 0; j < results.size(); ++j) {
+                    if (j != results.size() - 1 && results.at(j).at(orderByColumns.at(i - 1).first) == results.at(j + 1).at(orderByColumns.at(i - 1).first)) {
+                        ++sameSize;
+                    }
+                    else if (sameSize == 0) {
+                        newResults.push_back(results.at(j));
+                    }
+                    else if (sameSize > 0) {
+                        if (orderOrder == "Asc") {
+                            for (string columnValue: orderedColumnValues) {
+                                for (unsigned int k = j - sameSize; k <= j; ++k) {
+                                    if (results.at(k).at(columnName) == columnValue) {
+                                        newResults.push_back(results.at(k));
+                                    }
+                                }
+                            }
+                        }
+                        else if (orderOrder == "Desc") {
+                            for (set<string>::reverse_iterator rit = orderedColumnValues.rbegin(); rit != orderedColumnValues.rend(); ++rit) {
+                                for (unsigned int k = j - sameSize; k <= j; ++k) {
+                                    if (results.at(k).at(columnName) == *rit) {
+                                        newResults.push_back(results.at(k));
+                                    }
+                                }
+                            }
+                        }
+                        sameSize = 0;
+                    }
+                }
+            }
+        }
+        else if (dataType == "INT") {
+            set<int> orderedColumnValues = OrderColumnValuesInt(columnName, results);
+            if (i == 0) {
+                if (orderOrder == "Asc") {
+                    for (int columnValue: orderedColumnValues) {
+                        for (map<string,string> row: results) {
+                            if (row.at(columnName) == to_string(columnValue)) {
+                                newResults.push_back(row);
+                            }
+                        }
+                    }
+                }
+                else if (orderOrder == "Desc") {
+                    for (set<int>::reverse_iterator rit = orderedColumnValues.rbegin(); rit != orderedColumnValues.rend(); ++rit) {
+                        for (map<string,string> row: results) {
+                            if (row.at(columnName) == to_string(*rit)) {
+                                newResults.push_back(row);
+                            }
+                        }
+                    }
+                }
+            }
+            else {
+                int sameSize = 0;
+                for (unsigned long j = 0; j < results.size(); ++j) {
+                    if (j != results.size() - 1 && results.at(j).at(orderByColumns.at(i - 1).first) == results.at(j + 1).at(orderByColumns.at(i - 1).first)) {
+                        ++sameSize;
+                    }
+                    else if (sameSize == 0) {
+                        newResults.push_back(results.at(j));
+                    }
+                    else if (sameSize > 0) {
+                        if (orderOrder == "Asc") {
+                            for (int columnValue: orderedColumnValues) {
+                                for (unsigned int k = j - sameSize; k <= j; ++k) {
+                                    if (results.at(k).at(columnName) == to_string(columnValue)) {
+                                        newResults.push_back(results.at(k));
+                                    }
+                                }
+                            }
+                        }
+                        else if (orderOrder == "Desc") {
+                            for (set<int>::reverse_iterator rit = orderedColumnValues.rbegin(); rit != orderedColumnValues.rend(); ++rit) {
+                                for (unsigned int k = j - sameSize; k <= j; ++k) {
+                                    if (results.at(k).at(columnName) == to_string(*rit)) {
+                                        newResults.push_back(results.at(k));
+                                    }
+                                }
+                            }
+                        }
+                        sameSize = 0;
+                    }
+                }
+            }
+        }
+
+        results.clear();
+        results = newResults;
+    }
+}
+
 void SQL_Query_Create(string query) {
     //Get tokens from input
     queue<Token> tokens = GetTokens(query);
@@ -715,6 +948,72 @@ void SQL_Query_Update(string query) {
     queue<Token> tokens = GetTokens(query);
     MatchToken("Update", tokens);
     tokens.pop();
+
+    string tableName = GetTableName(tokens);
+    tokens.pop();
+    map<string,string> fields = GetTableFieldsMap(tableName);
+    vector<string> fieldOrder = GetTableFieldsOrder(tableName);
+
+    MatchToken("Set", tokens);
+    tokens.pop();
+
+    //Obtain new values
+    map<string,string> newValues = GetSetValues(tokens, fields);
+
+    //Get WHERE Tokens
+    vector<Token> whereTokens = GetWhereTokens(tokens, fields);
+
+    //Read in entire table
+    set<string> columnNames;
+    for (string field: fieldOrder) {
+        columnNames.insert(field);
+    }
+    vector<Token> empty;
+    SQL_Query_Results results = SelectRows(tableName,  columnNames, empty);
+
+    //Replace old values with new values when neccessary
+    for (map<string,string> &row: results) {
+        bool willBeReplaced;
+        if (whereTokens.size() > 0) {
+            vector<Token> semiEvaluated = RunConditionEval(row, whereTokens, fields);
+            willBeReplaced = ComputeLogic(semiEvaluated);
+        }
+
+        if (whereTokens.size() == 0 || willBeReplaced == true) {
+            for (pair<string,string> newValue: newValues) {
+                row.at(newValue.first) = newValue.second;
+            }
+        }
+    }
+
+    //Rewrite table
+    ofstream outFile;
+    outFile.open(tableName);
+    if (!outFile.is_open()) {
+        stringstream ss;
+        ss << "Unable to write to " << tableName;
+        Throw_Error(ss.str());
+    }
+    //Add Table Definition first
+    for (string field: fieldOrder) {
+        outFile << field << " " << fields.at(field) << ",";
+    }
+    outFile << "." << endl;
+
+    //Add new table rows
+    for (map<string,string> &row: results) {
+        for (string field: fieldOrder) {
+            string value = row.at(field);
+            if (fields.at(field) == "INT") {
+                value = DecimalToHex(value);
+            }
+            outFile << value << ",";
+        }
+        outFile << "." << endl;
+    }
+
+    outFile.close();
+    return;
 }
 
 void SQL_Query_Insert(string query) {
@@ -777,8 +1076,7 @@ void SQL_Query_Insert(string query) {
             type = "INT";
         }
         else if (tokens.front().GetType() == "TEXT") {
-            value = MatchToken("TEXT", tokens);
-            value = RemoveSingleQuotes(value);
+            value = RemoveSingleQuotes(MatchToken("TEXT", tokens));
             type = "TEXT";
         }
         else {
@@ -844,56 +1142,11 @@ SQL_Query_Results SQL_Query_Select(string query) {
     tokensCopy.pop();
 
     //Obtain WHERE tokens
-    vector<Token> whereTokens;
-    if (tokensCopy.size() > 0 && tokensCopy.front().GetType() == "Where") {
-        MatchToken("Where", tokensCopy);
-        tokensCopy.pop();
-        whereTokens.push_back(Token("Left-Paren", "("));
-        while (tokensCopy.size() > 0 && tokensCopy.front().GetType() != "Order By") {
-            //cout << tokensCopy.front().GetType() << ": " << tokensCopy.front().GetValue() << endl;
-            if (tokensCopy.front().GetType() == "Identifier") {
-                VerifyColumnName(tokensCopy.front().GetValue(), fields);
-            }
-            else if (tokensCopy.front().GetType() == "INT") {
-                tokensCopy.front().SetValue(tokensCopy.front().GetValue());
-            }
-            else if (tokensCopy.front().GetType() == "TEXT") {
-                tokensCopy.front().SetValue(RemoveSingleQuotes(tokensCopy.front().GetValue()));
-            }
-            whereTokens.push_back(tokensCopy.front());
-            tokensCopy.pop();
-        }
-        whereTokens.push_back(Token("Right-Paren", ")"));
-    }
+    vector<Token> whereTokens = GetWhereTokens(tokensCopy, fields);
     
     //Obtain Order By Columns
-    vector<pair<string,string>> orderByColumns;
-    if (tokensCopy.size() > 0 && tokensCopy.front().GetType() == "Order By") {
-        MatchToken("Order By", tokensCopy);
-        tokensCopy.pop();
-
-        while (tokensCopy.size() > 0) {
-            if (orderByColumns.size() > 0) {
-                MatchToken("Comma", tokensCopy);
-                tokensCopy.pop();
-            }
-            string columnName = MatchToken("Identifier", tokensCopy);
-            VerifyColumnName(columnName, fields);
-            tokensCopy.pop();
-            if (tokensCopy.size() > 0 && tokensCopy.front().GetType() == "Desc") {
-                orderByColumns.push_back(pair<string,string>(columnName, "Desc"));
-                tokensCopy.pop();
-            }
-            else if (tokensCopy.size() > 0 && tokensCopy.front().GetType() == "Asc") {
-                orderByColumns.push_back(pair<string,string>(columnName, "Asc"));
-                tokensCopy.pop();
-            }
-            else {
-                orderByColumns.push_back(pair<string,string>(columnName, "Asc"));
-            }
-        }
-    }
-
+    vector<pair<string,string>> orderByColumns = GetOrderByColumns(tokensCopy, fields);
+    
     tokensCopy = queue<Token>();
 
     bool distinct = false;
@@ -929,164 +1182,10 @@ SQL_Query_Results SQL_Query_Select(string query) {
     }
 
     SQL_Query_Results results = SelectRows(tableName, columnsSelected, whereTokens, distinct);
-    
-    while (tokens.size() > 0 && tokens.front().GetType() != "From") {
-        tokens.pop();
-    }
-
-    //Match the FROM tablename
-    MatchToken("From", tokens);
-    tokens.pop();
-    MatchToken("Identifier", tokens);
-    tokens.pop();
 
     //Computer Order By logic
     if (orderByColumns.size() > 0) {
-        for (unsigned int i = 0; i < orderByColumns.size(); ++i) {
-            //First obtain a set that orders that column value for all results
-            vector<map<string,string>> newResults;
-            string columnName = orderByColumns.at(i).first;
-            string orderOrder = orderByColumns.at(i).second;
-            string dataType = fields.at(columnName);
-            if (dataType == "TEXT") {
-                set<string> orderedColumnValues = OrderColumnValuesText(columnName, results);
-                if (i == 0) {
-                    if (orderOrder == "Asc") {
-                        for (string columnValue: orderedColumnValues) {
-                            for (map<string,string> row: results) {
-                                if (row.at(columnName) == columnValue) {
-                                    newResults.push_back(row);
-                                }
-                            }
-                        }
-                    }
-                    else {
-                        for (set<string>::reverse_iterator rit = orderedColumnValues.rbegin(); rit != orderedColumnValues.rend(); ++rit) {
-                            for (map<string,string> row: results) {
-                                if (row.at(columnName) == *rit) {
-                                    newResults.push_back(row);
-                                }
-                            }
-                        }
-                    }
-                }
-                else {
-                    if (orderOrder == "Asc") {
-                        int sameSize = 0;
-                        for (unsigned long j = 0; j < results.size(); ++j) {
-                            if (j != results.size() - 1 && results.at(j).at(orderByColumns.at(i - 1).first) == results.at(j + 1).at(orderByColumns.at(i - 1).first)) {
-                                ++sameSize;
-                            }
-                            else if (sameSize == 0) {
-                                newResults.push_back(results.at(j));
-                            }
-                            else if (sameSize > 0) {
-                                for (string columnValue: orderedColumnValues) {
-                                    for (unsigned int k = j - sameSize; k <= j; ++k) {
-                                        if (results.at(k).at(columnName) == columnValue) {
-                                            newResults.push_back(results.at(k));
-                                        }
-                                    }
-                                }
-                                sameSize = 0;
-                            }
-                        }
-                    }
-                    else {
-                        int sameSize = 0;
-                        for (unsigned long j = 0; j < results.size(); ++j) {
-                            if (j != results.size() - 1 && results.at(j).at(orderByColumns.at(i - 1).first) == results.at(j + 1).at(orderByColumns.at(i - 1).first)) {
-                                ++sameSize;
-                            }
-                            else if (sameSize == 0) {
-                                newResults.push_back(results.at(j));
-                            }
-                            else if (sameSize > 0) {
-                                for (set<string>::reverse_iterator rit = orderedColumnValues.rbegin(); rit != orderedColumnValues.rend(); ++rit) {
-                                    for (unsigned int k = j - sameSize; k <= j; ++k) {
-                                        if (results.at(k).at(columnName) == *rit) {
-                                            newResults.push_back(results.at(k));
-                                        }
-                                    }
-                                }
-                                sameSize = 0;
-                            }
-                        }
-                    }
-                }
-            }
-            else if (dataType == "INT") {
-                set<int> orderedColumnValues = OrderColumnValuesInt(columnName, results);
-                if (i == 0) {
-                    if (orderOrder == "Asc") {
-                        for (int columnValue: orderedColumnValues) {
-                            for (map<string,string> row: results) {
-                                if (row.at(columnName) == to_string(columnValue)) {
-                                    newResults.push_back(row);
-                                }
-                            }
-                        }
-                    }
-                    else {
-                        for (set<int>::reverse_iterator rit = orderedColumnValues.rbegin(); rit != orderedColumnValues.rend(); ++rit) {
-                            for (map<string,string> row: results) {
-                                if (row.at(columnName) == to_string(*rit)) {
-                                    newResults.push_back(row);
-                                }
-                            }
-                        }
-                    }
-                }
-                else {
-                    if (orderOrder == "Asc") {
-                        int sameSize = 0;
-                        for (unsigned long j = 0; j < results.size(); ++j) {
-                            if (j != results.size() - 1 && results.at(j).at(orderByColumns.at(i - 1).first) == results.at(j + 1).at(orderByColumns.at(i - 1).first)) {
-                                ++sameSize;
-                            }
-                            else if (sameSize == 0) {
-                                newResults.push_back(results.at(j));
-                            }
-                            else if (sameSize > 0) {
-                                for (int columnValue: orderedColumnValues) {
-                                    for (unsigned int k = j - sameSize; k <= j; ++k) {
-                                        if (results.at(k).at(columnName) == to_string(columnValue)) {
-                                            newResults.push_back(results.at(k));
-                                        }
-                                    }
-                                }
-                                sameSize = 0;
-                            }
-                        }
-                    }
-                    else {
-                        int sameSize = 0;
-                        for (unsigned long j = 0; j < results.size(); ++j) {
-                            if (j != results.size() - 1 && results.at(j).at(orderByColumns.at(i - 1).first) == results.at(j + 1).at(orderByColumns.at(i - 1).first)) {
-                                ++sameSize;
-                            }
-                            else if (sameSize == 0) {
-                                newResults.push_back(results.at(j));
-                            }
-                            else if (sameSize > 0) {
-                                for (set<int>::reverse_iterator rit = orderedColumnValues.rbegin(); rit != orderedColumnValues.rend(); ++rit) {
-                                    for (unsigned int k = j - sameSize; k <= j; ++k) {
-                                        if (results.at(k).at(columnName) == to_string(*rit)) {
-                                            newResults.push_back(results.at(k));
-                                        }
-                                    }
-                                }
-                                sameSize = 0;
-                            }
-                        }
-                    }
-                }
-            }
-
-            results.clear();
-            results = newResults;
-        }
-        
+        SortResults(results, orderByColumns, fields);
         //Remove ORDER BY columns from results that aren't in the SELECT columns
         for (pair<string,string> column: orderByColumns) {
             if (originalColumnsSelected.find(column.first) == originalColumnsSelected.end()) {
@@ -1095,11 +1194,7 @@ SQL_Query_Results SQL_Query_Select(string query) {
                 }
             }
         }
-
-        
     }
-    
-
     return results;
 }
 
