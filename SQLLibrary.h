@@ -942,10 +942,9 @@ SQL_Query_Results SQL_Query_Select(string query) {
 
     //Computer Order By logic
     if (orderByColumns.size() > 0) {
-        vector<map<string,string>> newResults;
         for (unsigned int i = 0; i < orderByColumns.size(); ++i) {
             //First obtain a set that orders that column value for all results
-            
+            vector<map<string,string>> newResults;
             string columnName = orderByColumns.at(i).first;
             string orderOrder = orderByColumns.at(i).second;
             string dataType = fields.at(columnName);
@@ -973,20 +972,44 @@ SQL_Query_Results SQL_Query_Select(string query) {
                 }
                 else {
                     if (orderOrder == "Asc") {
-                        for (string columnValue: orderedColumnValues) {
-                            for (map<string,string> row: results) {
-                                if (row.at(columnName) == columnValue) {
-                                    newResults.push_back(row);
+                        int sameSize = 0;
+                        for (unsigned long j = 0; j < results.size(); ++j) {
+                            if (j != results.size() - 1 && results.at(j).at(orderByColumns.at(i - 1).first) == results.at(j + 1).at(orderByColumns.at(i - 1).first)) {
+                                ++sameSize;
+                            }
+                            else if (sameSize == 0) {
+                                newResults.push_back(results.at(j));
+                            }
+                            else if (sameSize > 0) {
+                                for (string columnValue: orderedColumnValues) {
+                                    for (unsigned int k = j - sameSize; k <= j; ++k) {
+                                        if (results.at(k).at(columnName) == columnValue) {
+                                            newResults.push_back(results.at(k));
+                                        }
+                                    }
                                 }
+                                sameSize = 0;
                             }
                         }
                     }
                     else {
-                        for (set<string>::reverse_iterator rit = orderedColumnValues.rbegin(); rit != orderedColumnValues.rend(); ++rit) {
-                            for (map<string,string> row: results) {
-                                if (row.at(columnName) == *rit) {
-                                    newResults.push_back(row);
+                        int sameSize = 0;
+                        for (unsigned long j = 0; j < results.size(); ++j) {
+                            if (j != results.size() - 1 && results.at(j).at(orderByColumns.at(i - 1).first) == results.at(j + 1).at(orderByColumns.at(i - 1).first)) {
+                                ++sameSize;
+                            }
+                            else if (sameSize == 0) {
+                                newResults.push_back(results.at(j));
+                            }
+                            else if (sameSize > 0) {
+                                for (set<string>::reverse_iterator rit = orderedColumnValues.rbegin(); rit != orderedColumnValues.rend(); ++rit) {
+                                    for (unsigned int k = j - sameSize; k <= j; ++k) {
+                                        if (results.at(k).at(columnName) == *rit) {
+                                            newResults.push_back(results.at(k));
+                                        }
+                                    }
                                 }
+                                sameSize = 0;
                             }
                         }
                     }
@@ -1013,26 +1036,67 @@ SQL_Query_Results SQL_Query_Select(string query) {
                             }
                         }
                     }
-                    results.clear();
-                    results = newResults;
                 }
                 else {
-
+                    if (orderOrder == "Asc") {
+                        int sameSize = 0;
+                        for (unsigned long j = 0; j < results.size(); ++j) {
+                            if (j != results.size() - 1 && results.at(j).at(orderByColumns.at(i - 1).first) == results.at(j + 1).at(orderByColumns.at(i - 1).first)) {
+                                ++sameSize;
+                            }
+                            else if (sameSize == 0) {
+                                newResults.push_back(results.at(j));
+                            }
+                            else if (sameSize > 0) {
+                                for (int columnValue: orderedColumnValues) {
+                                    for (unsigned int k = j - sameSize; k <= j; ++k) {
+                                        if (results.at(k).at(columnName) == to_string(columnValue)) {
+                                            newResults.push_back(results.at(k));
+                                        }
+                                    }
+                                }
+                                sameSize = 0;
+                            }
+                        }
+                    }
+                    else {
+                        int sameSize = 0;
+                        for (unsigned long j = 0; j < results.size(); ++j) {
+                            if (j != results.size() - 1 && results.at(j).at(orderByColumns.at(i - 1).first) == results.at(j + 1).at(orderByColumns.at(i - 1).first)) {
+                                ++sameSize;
+                            }
+                            else if (sameSize == 0) {
+                                newResults.push_back(results.at(j));
+                            }
+                            else if (sameSize > 0) {
+                                for (set<int>::reverse_iterator rit = orderedColumnValues.rbegin(); rit != orderedColumnValues.rend(); ++rit) {
+                                    for (unsigned int k = j - sameSize; k <= j; ++k) {
+                                        if (results.at(k).at(columnName) == to_string(*rit)) {
+                                            newResults.push_back(results.at(k));
+                                        }
+                                    }
+                                }
+                                sameSize = 0;
+                            }
+                        }
+                    }
                 }
             }
+
+            results.clear();
+            results = newResults;
         }
         
         //Remove ORDER BY columns from results that aren't in the SELECT columns
         for (pair<string,string> column: orderByColumns) {
             if (originalColumnsSelected.find(column.first) == originalColumnsSelected.end()) {
-                for (map<string,string> &result: newResults) {
+                for (map<string,string> &result: results) {
                     result.erase(column.first);
                 }
             }
         }
 
-        results.clear();
-        results = newResults;
+        
     }
     
 
