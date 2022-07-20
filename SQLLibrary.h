@@ -969,17 +969,17 @@ void SQL_Query_Update(string query) {
         columnNames.insert(field);
     }
     vector<Token> empty;
-    SQL_Query_Results results = SelectRows(tableName,  columnNames, empty);
+    SQL_Query_Results results = SelectRows(tableName, columnNames, empty);
 
     //Replace old values with new values when neccessary
     for (map<string,string> &row: results) {
-        bool willBeReplaced;
+        bool willBeUpdated;
         if (whereTokens.size() > 0) {
             vector<Token> semiEvaluated = RunConditionEval(row, whereTokens, fields);
-            willBeReplaced = ComputeLogic(semiEvaluated);
+            willBeUpdated = ComputeLogic(semiEvaluated);
         }
 
-        if (whereTokens.size() == 0 || willBeReplaced == true) {
+        if (whereTokens.size() == 0 || willBeUpdated == true) {
             for (pair<string,string> newValue: newValues) {
                 row.at(newValue.first) = newValue.second;
             }
@@ -1203,6 +1203,65 @@ void SQL_Query_Delete(string query) {
     queue<Token> tokens = GetTokens(query);
     MatchToken("Delete", tokens);
     tokens.pop();
+
+    string tableName = GetTableName(tokens);
+    tokens.pop();
+    map<string,string> fields = GetTableFieldsMap(tableName);
+    vector<string> fieldOrder = GetTableFieldsOrder(tableName);
+
+    //Get WHERE Tokens
+    vector<Token> whereTokens = GetWhereTokens(tokens, fields);
+
+    //Read in entire table
+    set<string> columnNames;
+    for (string field: fieldOrder) {
+        columnNames.insert(field);
+    }
+    vector<Token> empty;
+    SQL_Query_Results results = SelectRows(tableName, columnNames, empty);
+
+    //Delete rows when neccessary
+    for (unsigned int i = 0; i < results.size(); ++i) {
+        bool willBeDeleted;
+        if (whereTokens.size() > 0) {
+            vector<Token> semiEvaluated = RunConditionEval(results.at(i), whereTokens, fields);
+            willBeDeleted = ComputeLogic(semiEvaluated);
+        }
+
+        if (whereTokens.size() == 0 || willBeDeleted == true) {
+            results.erase(results.begin() + i);
+            --i;
+        }
+    }
+
+    //Rewrite table
+    ofstream outFile;
+    outFile.open(tableName);
+    if (!outFile.is_open()) {
+        stringstream ss;
+        ss << "Unable to write to " << tableName;
+        Throw_Error(ss.str());
+    }
+    //Add Table Definition first
+    for (string field: fieldOrder) {
+        outFile << field << " " << fields.at(field) << ",";
+    }
+    outFile << "." << endl;
+
+    //Add new table rows
+    for (map<string,string> &row: results) {
+        for (string field: fieldOrder) {
+            string value = row.at(field);
+            if (fields.at(field) == "INT") {
+                value = DecimalToHex(value);
+            }
+            outFile << value << ",";
+        }
+        outFile << "." << endl;
+    }
+
+    outFile.close();
+    return;
 }
 
 #endif

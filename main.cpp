@@ -19,9 +19,12 @@ int main () {
         ++nameId;
         TEST
     }
-    SQL_Query_Results results = SQL_Query_Select("SELECT id,name FROM table WHERE name = 'Dallin' ORDER BY age DESC");
+    SQL_Query_Results results = SQL_Query_Select("SELECT id,name FROM table WHERE name = 'Dallin' ORDER BY age ASC");
+    for (map<string,string>row : results) {
+        cout << row.at("id") << " " << row.at("name") << endl;
+    }
     */
-    SQL_Query_Update("UPDATE table SET name = 'New', id = 10 WHERE age = 50");
+    SQL_Query_Delete("DELETE FROM table WHERE age > 30 OR age < 20");
     
     return 0;
 }
