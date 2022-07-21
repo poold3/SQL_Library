@@ -15,6 +15,7 @@ using namespace std;
 
 typedef vector<map<string,string>> SQL_Query_Results;
 SQL_Query_Results undefined;
+map<string,string> undefinedMap;
 class Token {
     private:
     string type;
@@ -443,62 +444,37 @@ string ConditionEval(string realValue, string condition, string testValue, strin
             if (dataType == "INT" && realValueInt < testValueInt) {
                 return "True";
             }
-            else if (realValue < testValue) {
+            else if (dataType == "TEXT" && realValue < testValue) {
                 return "True";
             }
         }
         else if (condition == "<=") {
-            if (realValueInt <= testValueInt) {
+            if (dataType == "INT" && realValueInt <= testValueInt) {
                 return "True";
             }
-            else if (realValue <= testValue) {
+            else if (dataType == "TEXT" && realValue <= testValue) {
                 return "True";
             }
         }
         else if (condition == ">") {
-            if (realValueInt > testValueInt) {
+            if (dataType == "INT" && realValueInt > testValueInt) {
                 return "True";
             }
-            else if (realValue > testValue) {
+            else if (dataType == "TEXT" && realValue > testValue) {
                 return "True";
             }
         }
         else if (condition == ">=") {
-            if (realValueInt >= testValueInt) {
+            if (dataType == "INT" && realValueInt >= testValueInt) {
                 return "True";
             }
-            else if (realValue >= testValue) {
+            else if (dataType == "TEXT" && realValue >= testValue) {
                 return "True";
             }
         }
     }
     
     return "False";
-}
-
-//Calculate where a SQL_QUERY_RESULTS row meets the WHERE requirements
-vector<Token> RunConditionEval(map<string,string> row, vector<Token> whereTokens, map<string,string> &fields) {
-    //Build new whereTokens vector with evaluated conditions: true and false values
-    vector<Token> whereTokensCopy = whereTokens;
-    whereTokens.clear();
-    for (unsigned long i = 0; i < whereTokensCopy.size(); ++i) {
-        if (i < whereTokensCopy.size() - 3 && whereTokensCopy.at(i).GetType() == "Identifier") {
-            string columnName = MatchToken("Identifier", whereTokensCopy.at(i));
-            string condition = MatchToken("Logic", whereTokensCopy.at(i + 1));
-            string testValue = whereTokensCopy.at(i + 2).GetValue();
-            string realValue = row.at(columnName);
-            string dataType = fields.at(columnName);
-            string evalResult = ConditionEval(realValue, condition, testValue, dataType);
-            whereTokens.push_back(Token("Eval", evalResult));
-            i += 2;
-        }
-        else {
-            whereTokens.push_back(whereTokensCopy.at(i));
-        }
-    }
-    whereTokensCopy.clear();
-
-    return whereTokens;
 }
 
 //Calculate where a table row meets the WHERE requirements
@@ -602,7 +578,7 @@ bool ComputeLogic(vector<Token> tokens) {
     }
 }
 
-SQL_Query_Results SelectRows(string tableName, set<string> &columnNames, vector<Token> &whereTokens, bool distinct = false) {
+SQL_Query_Results SelectRows(string tableName, set<string> &columnNames, vector<Token> &whereTokens, bool distinct = false, bool opposite = false, map<string,string> newValues = undefinedMap) {
     SQL_Query_Results results;
     map<string,int> fieldOrder = GetTableFieldsOrderMap(tableName);
     map<string,string> fields = GetTableFieldsMap(tableName);
@@ -640,7 +616,7 @@ SQL_Query_Results SelectRows(string tableName, set<string> &columnNames, vector<
         }
 
         //Use where tokens to determine if we need this row
-        if (whereTokens.size() == 0 || isNeeded == true) {
+        if ((opposite == false && (whereTokens.size() == 0 || isNeeded == true)) || (opposite == true && (whereTokens.size() > 0 && isNeeded == false)) || newValues.size() > 0) {
             int columnNumber = 0;
             while (tokens.size() > 0 && tokens.front().GetType() != "Period") {
                 if (columnNumber > 0) {
@@ -652,7 +628,10 @@ SQL_Query_Results SelectRows(string tableName, set<string> &columnNames, vector<
                     string columnName = positions.at(columnNumber);
                     string dataType = fields.at(columnName);
                     string value;
-                    if (dataType == "INT") {
+                    if (newValues.size() > 0 && isNeeded == true && newValues.find(columnName) != newValues.end()) {
+                        value = newValues.at(columnName);
+                    }
+                    else if (dataType == "INT") {
                         value = HexToDecimal(tokens.front().GetValue());
                     }
                     else if (dataType == "TEXT") {
@@ -969,22 +948,7 @@ void SQL_Query_Update(string query) {
         columnNames.insert(field);
     }
     vector<Token> empty;
-    SQL_Query_Results results = SelectRows(tableName, columnNames, empty);
-
-    //Replace old values with new values when neccessary
-    for (map<string,string> &row: results) {
-        bool willBeUpdated;
-        if (whereTokens.size() > 0) {
-            vector<Token> semiEvaluated = RunConditionEval(row, whereTokens, fields);
-            willBeUpdated = ComputeLogic(semiEvaluated);
-        }
-
-        if (whereTokens.size() == 0 || willBeUpdated == true) {
-            for (pair<string,string> newValue: newValues) {
-                row.at(newValue.first) = newValue.second;
-            }
-        }
-    }
+    SQL_Query_Results results = SelectRows(tableName, columnNames, whereTokens, false, false, newValues);
 
     //Rewrite table
     ofstream outFile;
@@ -1218,21 +1182,7 @@ void SQL_Query_Delete(string query) {
         columnNames.insert(field);
     }
     vector<Token> empty;
-    SQL_Query_Results results = SelectRows(tableName, columnNames, empty);
-
-    //Delete rows when neccessary
-    for (unsigned int i = 0; i < results.size(); ++i) {
-        bool willBeDeleted;
-        if (whereTokens.size() > 0) {
-            vector<Token> semiEvaluated = RunConditionEval(results.at(i), whereTokens, fields);
-            willBeDeleted = ComputeLogic(semiEvaluated);
-        }
-
-        if (whereTokens.size() == 0 || willBeDeleted == true) {
-            results.erase(results.begin() + i);
-            --i;
-        }
-    }
+    SQL_Query_Results results = SelectRows(tableName, columnNames, whereTokens, false, true);
 
     //Rewrite table
     ofstream outFile;

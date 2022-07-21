@@ -24,7 +24,8 @@ int main () {
         cout << row.at("id") << " " << row.at("name") << endl;
     }
     */
-    SQL_Query_Delete("DELETE FROM table WHERE age > 30 OR age < 20");
+    //SQL_Query_Delete("DELETE FROM table WHERE id <= 3");
+    SQL_Query_Update("UPDATE table SET name = 'YOUNG' WHERE age <> 22");
     
     return 0;
 }
