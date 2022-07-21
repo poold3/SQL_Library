@@ -178,6 +178,10 @@ queue<Token> GetTokens(string input) {
             size = 8;
             type = "Distinct";
         }
+        else if (input.substr(0, 3) == "AS ") {
+            size = 2;
+            type = "As";
+        }
         else if (input.substr(0, 12) == "CREATE TABLE") {
             size = 12;
             type = "Create";
@@ -578,7 +582,7 @@ bool ComputeLogic(vector<Token> tokens) {
     }
 }
 
-SQL_Query_Results SelectRows(string tableName, set<string> &columnNames, vector<Token> &whereTokens, bool distinct = false, bool opposite = false, map<string,string> newValues = undefinedMap) {
+SQL_Query_Results DeleteRows(string tableName, set<string> &columnNames, vector<Token> &whereTokens) {
     SQL_Query_Results results;
     map<string,int> fieldOrder = GetTableFieldsOrderMap(tableName);
     map<string,string> fields = GetTableFieldsMap(tableName);
@@ -589,6 +593,146 @@ SQL_Query_Results SelectRows(string tableName, set<string> &columnNames, vector<
         positions.insert(pair<int,string>(fieldOrder.at(columnName), columnName));
     }
 
+    ifstream inFile;
+    inFile.open(tableName);
+    if (!inFile.is_open()) {
+        stringstream ss;
+        ss << "Could not read from " << tableName;
+        Throw_Error(ss.str());
+    }
+
+    //Read in first line because first line are the field definitions
+    string tableRow;
+    getline(inFile, tableRow);
+
+    //Iterate through the rest of the table rows
+    while (getline(inFile, tableRow)) {
+        map<string,string> rowResults;
+        queue<Token> tokens = GetTokens(tableRow);
+
+        bool isDeleted;
+        if (whereTokens.size() != 0) {
+            vector<Token> semiEvaluated = RunConditionEval(tokens, whereTokens, fieldOrder, fields);
+            isDeleted = ComputeLogic(semiEvaluated);
+        }
+
+        //Use where tokens to determine if we need this row
+        if (whereTokens.size() > 0 && isDeleted == false) {
+            int columnNumber = 0;
+            while (tokens.size() > 0 && tokens.front().GetType() != "Period") {
+                if (columnNumber > 0) {
+                    MatchToken("Comma", tokens);
+                    tokens.pop();
+                }
+                if (positions.find(columnNumber) != positions.end()) {
+                    //We know we need this column. Find what the datatype it is supposed to be.
+                    string columnName = positions.at(columnNumber);
+                    string dataType = fields.at(columnName);
+                    string value;
+                    if (dataType == "INT") {
+                        value = HexToDecimal(tokens.front().GetValue());
+                    }
+                    else if (dataType == "TEXT") {
+                        value = tokens.front().GetValue();
+                    }
+                    else {
+                        Throw_Error("Invalid datatype in table field");
+                    }
+                    rowResults.insert(pair<string,string>(columnName, value));
+                }
+                tokens.pop();
+                ++columnNumber;
+            }
+            results.push_back(rowResults);
+
+        }
+    }   
+
+    inFile.close();
+    return results;
+}
+
+SQL_Query_Results UpdateRows(string tableName, set<string> &columnNames, vector<Token> &whereTokens, map<string,string> newValues = undefinedMap) {
+    SQL_Query_Results results;
+    map<string,int> fieldOrder = GetTableFieldsOrderMap(tableName);
+    map<string,string> fields = GetTableFieldsMap(tableName);
+
+    //Save positions of columns to store
+    map<int, string> positions;
+    for (string columnName: columnNames) {
+        positions.insert(pair<int,string>(fieldOrder.at(columnName), columnName));
+    }
+
+    ifstream inFile;
+    inFile.open(tableName);
+    if (!inFile.is_open()) {
+        stringstream ss;
+        ss << "Could not read from " << tableName;
+        Throw_Error(ss.str());
+    }
+
+    //Read in first line because first line are the field definitions
+    string tableRow;
+    getline(inFile, tableRow);
+
+    //Iterate through the rest of the table rows
+    while (getline(inFile, tableRow)) {
+        map<string,string> rowResults;
+        queue<Token> tokens = GetTokens(tableRow);
+
+        bool isNeeded;
+        if (whereTokens.size() != 0) {
+            vector<Token> semiEvaluated = RunConditionEval(tokens, whereTokens, fieldOrder, fields);
+            isNeeded = ComputeLogic(semiEvaluated);
+        }
+
+        //Use where tokens to determine if we need this row
+        int columnNumber = 0;
+        while (tokens.size() > 0 && tokens.front().GetType() != "Period") {
+            if (columnNumber > 0) {
+                MatchToken("Comma", tokens);
+                tokens.pop();
+            }
+            if (positions.find(columnNumber) != positions.end()) {
+                //We know we need this column. Find what the datatype it is supposed to be.
+                string columnName = positions.at(columnNumber);
+                string dataType = fields.at(columnName);
+                string value;
+                if (newValues.size() > 0 && isNeeded == true && newValues.find(columnName) != newValues.end()) {
+                    value = newValues.at(columnName);
+                }
+                else if (dataType == "INT") {
+                    value = HexToDecimal(tokens.front().GetValue());
+                }
+                else if (dataType == "TEXT") {
+                    value = tokens.front().GetValue();
+                }
+                else {
+                    Throw_Error("Invalid datatype in table field");
+                }
+                rowResults.insert(pair<string,string>(columnName, value));
+            }
+            tokens.pop();
+            ++columnNumber;
+        }
+        results.push_back(rowResults);
+    }   
+
+    inFile.close();
+    return results;
+}
+
+SQL_Query_Results SelectRows(string tableName, set<string> &columnNames, vector<Token> &whereTokens, bool distinct = false, map<string,string> selectedAs = undefinedMap) {
+    SQL_Query_Results results;
+    map<string,int> fieldOrder = GetTableFieldsOrderMap(tableName);
+    map<string,string> fields = GetTableFieldsMap(tableName);
+
+    //Save positions of columns to store
+    map<int, string> positions;
+    for (string columnName: columnNames) {
+        positions.insert(pair<int,string>(fieldOrder.at(columnName), columnName));
+    }
+    
     ifstream inFile;
     inFile.open(tableName);
     if (!inFile.is_open()) {
@@ -614,9 +758,9 @@ SQL_Query_Results SelectRows(string tableName, set<string> &columnNames, vector<
             vector<Token> semiEvaluated = RunConditionEval(tokens, whereTokens, fieldOrder, fields);
             isNeeded = ComputeLogic(semiEvaluated);
         }
-
+        
         //Use where tokens to determine if we need this row
-        if ((opposite == false && (whereTokens.size() == 0 || isNeeded == true)) || (opposite == true && (whereTokens.size() > 0 && isNeeded == false)) || newValues.size() > 0) {
+        if (whereTokens.size() == 0 || isNeeded == true) {
             int columnNumber = 0;
             while (tokens.size() > 0 && tokens.front().GetType() != "Period") {
                 if (columnNumber > 0) {
@@ -627,11 +771,11 @@ SQL_Query_Results SelectRows(string tableName, set<string> &columnNames, vector<
                     //We know we need this column. Find what the datatype it is supposed to be.
                     string columnName = positions.at(columnNumber);
                     string dataType = fields.at(columnName);
-                    string value;
-                    if (newValues.size() > 0 && isNeeded == true && newValues.find(columnName) != newValues.end()) {
-                        value = newValues.at(columnName);
+                    if (selectedAs.size() > 0 && selectedAs.find(columnName) != selectedAs.end()) {
+                        columnName = selectedAs.at(columnName);
                     }
-                    else if (dataType == "INT") {
+                    string value;
+                    if (dataType == "INT") {
                         value = HexToDecimal(tokens.front().GetValue());
                     }
                     else if (dataType == "TEXT") {
@@ -948,7 +1092,7 @@ void SQL_Query_Update(string query) {
         columnNames.insert(field);
     }
     vector<Token> empty;
-    SQL_Query_Results results = SelectRows(tableName, columnNames, whereTokens, false, false, newValues);
+    SQL_Query_Results results = UpdateRows(tableName, columnNames, whereTokens, newValues);
 
     //Rewrite table
     ofstream outFile;
@@ -1108,7 +1252,7 @@ SQL_Query_Results SQL_Query_Select(string query) {
     //Obtain WHERE tokens
     vector<Token> whereTokens = GetWhereTokens(tokensCopy, fields);
     
-    //Obtain Order By Columns
+    //Obtain ORDER BY Columns
     vector<pair<string,string>> orderByColumns = GetOrderByColumns(tokensCopy, fields);
     
     tokensCopy = queue<Token>();
@@ -1121,6 +1265,7 @@ SQL_Query_Results SQL_Query_Select(string query) {
     }
 
     set<string> columnsSelected;
+    map<string,string> selectedAs;
     //Read the columns selected in the SQL_QUERY Input
     while (tokens.size() > 0 && tokens.front().GetType() != "From") {
         if (columnsSelected.size() > 0) {
@@ -1138,14 +1283,24 @@ SQL_Query_Results SQL_Query_Select(string query) {
         tokens.pop();
         VerifyColumnName(columnName, fields);
         columnsSelected.insert(columnName);
+        //Look for the AS keyword
+        if (tokens.size() > 0 && tokens.front().GetType() == "As") {
+            MatchToken("As", tokens);
+            tokens.pop();
+            string selectAs = MatchToken("Identifier", tokens);
+            tokens.pop();
+            selectedAs.insert(pair<string,string>(columnName, selectAs));
+        }
     }
+
+
     set<string> originalColumnsSelected = columnsSelected;
     //Add on any ORDER BY columns
     for (pair<string,string> column: orderByColumns) {
         columnsSelected.insert(column.first);
     }
 
-    SQL_Query_Results results = SelectRows(tableName, columnsSelected, whereTokens, distinct);
+    SQL_Query_Results results = SelectRows(tableName, columnsSelected, whereTokens, distinct, selectedAs);
 
     //Computer Order By logic
     if (orderByColumns.size() > 0) {
@@ -1182,7 +1337,7 @@ void SQL_Query_Delete(string query) {
         columnNames.insert(field);
     }
     vector<Token> empty;
-    SQL_Query_Results results = SelectRows(tableName, columnNames, whereTokens, false, true);
+    SQL_Query_Results results = DeleteRows(tableName, columnNames, whereTokens);
 
     //Rewrite table
     ofstream outFile;
