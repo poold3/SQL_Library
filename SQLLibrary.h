@@ -722,7 +722,7 @@ SQL_Query_Results UpdateRows(string tableName, set<string> &columnNames, vector<
     return results;
 }
 
-SQL_Query_Results SelectRows(string tableName, set<string> &columnNames, vector<Token> &whereTokens, bool distinct = false, map<string,string> selectedAs = undefinedMap) {
+SQL_Query_Results SelectRows(string tableName, set<string> &columnNames, vector<Token> &whereTokens, bool distinct = false, map<string,string> columnToSelectedAs = undefinedMap) {
     SQL_Query_Results results;
     map<string,int> fieldOrder = GetTableFieldsOrderMap(tableName);
     map<string,string> fields = GetTableFieldsMap(tableName);
@@ -771,8 +771,8 @@ SQL_Query_Results SelectRows(string tableName, set<string> &columnNames, vector<
                     //We know we need this column. Find what the datatype it is supposed to be.
                     string columnName = positions.at(columnNumber);
                     string dataType = fields.at(columnName);
-                    if (selectedAs.size() > 0 && selectedAs.find(columnName) != selectedAs.end()) {
-                        columnName = selectedAs.at(columnName);
+                    if (columnToSelectedAs.size() > 0 && columnToSelectedAs.find(columnName) != columnToSelectedAs.end()) {
+                        columnName = columnToSelectedAs.at(columnName);
                     }
                     string value;
                     if (dataType == "INT") {
@@ -819,14 +819,17 @@ set<int> OrderColumnValuesInt(string columnName, vector<map<string,string>> data
     return orderedColumnValues;
 }
 
-vector<Token> GetWhereTokens(queue<Token> &tokens, map<string,string> &fields) {
+vector<Token> GetWhereTokens(queue<Token> &tokens, map<string,string> &fields, map<string,string> aliases = undefinedMap) {
     vector<Token> whereTokens;
-    if (tokens.size() > 0 && tokens.front().GetType() == "Where") {
+    if (tokens.size() > 0 && tokens.front().GetType() == "Where") {   
         MatchToken("Where", tokens);
         tokens.pop();
         whereTokens.push_back(Token("Left-Paren", "("));
         while (tokens.size() > 0 && tokens.front().GetType() != "Order By") {
             if (tokens.front().GetType() == "Identifier") {
+                if (aliases.size() > 0 && aliases.find(tokens.front().GetValue()) != aliases.end()) {
+                    tokens.front().SetValue(aliases.at(tokens.front().GetValue()));
+                }
                 VerifyColumnName(tokens.front().GetValue(), fields);
             }
             else if (tokens.front().GetType() == "INT") {
@@ -843,7 +846,7 @@ vector<Token> GetWhereTokens(queue<Token> &tokens, map<string,string> &fields) {
     return whereTokens;
 }
 
-vector<pair<string,string>> GetOrderByColumns(queue<Token> &tokens, map<string,string> &fields) {
+vector<pair<string,string>> GetOrderByColumns(queue<Token> &tokens, map<string,string> &fields, map<string,string> aliases = undefinedMap) {
     vector<pair<string,string>> orderByColumns;
     if (tokens.size() > 0 && tokens.front().GetType() == "Order By") {
         MatchToken("Order By", tokens);
@@ -855,6 +858,9 @@ vector<pair<string,string>> GetOrderByColumns(queue<Token> &tokens, map<string,s
                 tokens.pop();
             }
             string columnName = MatchToken("Identifier", tokens);
+            if (aliases.size() > 0 && aliases.find(columnName) != aliases.end()) {
+                columnName = aliases.at(columnName);
+            }
             VerifyColumnName(columnName, fields);
             tokens.pop();
             if (tokens.size() > 0 && tokens.front().GetType() == "Desc") {
@@ -904,13 +910,20 @@ map<string,string> GetSetValues(queue<Token> &tokens, map<string,string> &fields
     return newValues;
 }
 
-void SortResults(vector<map<string,string>> &results, vector<pair<string,string>> &orderByColumns, map<string,string> &fields) {
+void SortResults(vector<map<string,string>> &results, vector<pair<string,string>> orderByColumns, map<string,string> &fields, map<string,string> aliases = undefinedMap) {
     for (unsigned int i = 0; i < orderByColumns.size(); ++i) {
         //First obtain a set that orders that column value for all results
         vector<map<string,string>> newResults;
         string columnName = orderByColumns.at(i).first;
-        string orderOrder = orderByColumns.at(i).second;
         string dataType = fields.at(columnName);
+        string orderOrder = orderByColumns.at(i).second;
+        
+        //Change the columnName to the alias if it exists
+        if (aliases.find(columnName) != aliases.end()) {
+            orderByColumns.at(i).first = aliases.at(columnName);
+            columnName = aliases.at(columnName);
+        }
+
         if (dataType == "TEXT") {
             set<string> orderedColumnValues = OrderColumnValuesText(columnName, results);
             if (i == 0) {
@@ -1019,6 +1032,7 @@ void SortResults(vector<map<string,string>> &results, vector<pair<string,string>
                         sameSize = 0;
                     }
                 }
+                
             }
         }
 
@@ -1249,12 +1263,6 @@ SQL_Query_Results SQL_Query_Select(string query) {
     vector<string> fieldOrder = GetTableFieldsOrder(tableName);
     tokensCopy.pop();
 
-    //Obtain WHERE tokens
-    vector<Token> whereTokens = GetWhereTokens(tokensCopy, fields);
-    
-    //Obtain ORDER BY Columns
-    vector<pair<string,string>> orderByColumns = GetOrderByColumns(tokensCopy, fields);
-    
     tokensCopy = queue<Token>();
 
     bool distinct = false;
@@ -1265,7 +1273,8 @@ SQL_Query_Results SQL_Query_Select(string query) {
     }
 
     set<string> columnsSelected;
-    map<string,string> selectedAs;
+    map<string,string> selectedAsToColumn;
+    map<string,string> columnToSelectedAs;
     //Read the columns selected in the SQL_QUERY Input
     while (tokens.size() > 0 && tokens.front().GetType() != "From") {
         if (columnsSelected.size() > 0) {
@@ -1289,22 +1298,33 @@ SQL_Query_Results SQL_Query_Select(string query) {
             tokens.pop();
             string selectAs = MatchToken("Identifier", tokens);
             tokens.pop();
-            selectedAs.insert(pair<string,string>(columnName, selectAs));
+            selectedAsToColumn.insert(pair<string,string>(selectAs, columnName));
+            columnToSelectedAs.insert(pair<string,string>(columnName, selectAs));
         }
     }
+    MatchToken("From", tokens);
+    tokens.pop();
+    MatchToken("Identifier", tokens);
+    tokens.pop();
 
-
+    //Obtain WHERE tokens
+    vector<Token> whereTokens = GetWhereTokens(tokens, fields, selectedAsToColumn);
+    
+    //Obtain ORDER BY Columns
+    vector<pair<string,string>> orderByColumns = GetOrderByColumns(tokens, fields, selectedAsToColumn);
+    
     set<string> originalColumnsSelected = columnsSelected;
     //Add on any ORDER BY columns
     for (pair<string,string> column: orderByColumns) {
         columnsSelected.insert(column.first);
     }
-
-    SQL_Query_Results results = SelectRows(tableName, columnsSelected, whereTokens, distinct, selectedAs);
+    
+    SQL_Query_Results results = SelectRows(tableName, columnsSelected, whereTokens, distinct, columnToSelectedAs);
 
     //Computer Order By logic
     if (orderByColumns.size() > 0) {
-        SortResults(results, orderByColumns, fields);
+        SortResults(results, orderByColumns, fields, columnToSelectedAs);
+
         //Remove ORDER BY columns from results that aren't in the SELECT columns
         for (pair<string,string> column: orderByColumns) {
             if (originalColumnsSelected.find(column.first) == originalColumnsSelected.end()) {
@@ -1314,6 +1334,7 @@ SQL_Query_Results SQL_Query_Select(string query) {
             }
         }
     }
+
     return results;
 }
 

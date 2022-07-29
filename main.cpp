@@ -27,7 +27,8 @@ int main () {
     //SQL_Query_Delete("DELETE FROM table WHERE id <= 3");
     //SQL_Query_Update("UPDATE table SET name = 'YOUNG' WHERE age <> 22");
     
-    SQL_Query_Results results = SQL_Query_Select("SELECT id AS employeeID,name AS title FROM table WHERE title = 'Dallin' ORDER BY title ASC");
+    SQL_Query_Results results = SQL_Query_Select("SELECT id AS employeeID,name AS title FROM table ORDER BY employeeID ASC, name DESC");
+
     for (map<string,string>row : results) {
         cout << row.at("employeeID") << " " << row.at("title") << endl;
     }
